@@ -169,29 +169,30 @@ function SWEP:DrawCustomModel(wm, custompos, customang, flags)
                         local bonename = atttbl.CharmBone
                         if bonename then
                             local boneindex = model:LookupBone(bonename)
+                            if boneindex then
+                                local bonemat = model:GetBoneMatrix(boneindex)
+                                if bonemat then
+                                    bpos = bonemat:GetTranslation()
+                                    bang = bonemat:GetAngles()
+                                end
 
-                            local bonemat = model:GetBoneMatrix(boneindex)
-                            if bonemat then
-                                bpos = bonemat:GetTranslation()
-                                bang = bonemat:GetAngles()
-                            end
+                                if bpos and bang then
+                                    local coffset = atttbl.CharmOffset or v0
+                                    local cangle = atttbl.CharmAngle or a0
 
-                            if bpos and bang then
-                                local coffset = atttbl.CharmOffset or v0
-                                local cangle = atttbl.CharmAngle or a0
+                                    local up, right, forward = bang:Up(), bang:Right(), bang:Forward()
 
-                                local up, right, forward = bang:Up(), bang:Right(), bang:Forward()
+                                    bpos = bpos + forward * coffset.y + up * coffset.z + right * coffset.x
 
-                                bpos = bpos + forward * coffset.y + up * coffset.z + right * coffset.x
+                                    bang:RotateAroundAxis(up, cangle.p)
+                                    bang:RotateAroundAxis(right, cangle.y)
+                                    bang:RotateAroundAxis(forward, cangle.r)
 
-                                bang:RotateAroundAxis(up, cangle.p)
-                                bang:RotateAroundAxis(right, cangle.y)
-                                bang:RotateAroundAxis(forward, cangle.r)
-
-                                model.charmmdl:SetPos(bpos)
-                                model.charmmdl:SetAngles(bang)
-                                model.charmmdl:SetupBones()
-                                model.charmmdl:DrawModel()
+                                    model.charmmdl:SetPos(bpos)
+                                    model.charmmdl:SetAngles(bang)
+                                    model.charmmdl:SetupBones()
+                                    model.charmmdl:DrawModel()
+                                end
                             end
                         end
                     end
