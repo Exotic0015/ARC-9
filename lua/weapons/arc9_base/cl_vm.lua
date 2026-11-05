@@ -1,27 +1,172 @@
+local ScrW, ScrH, CurTime, FrameTime, FrameNumber, EyePos, EyeAngles, MainEyeAngles, LocalToWorld, DynamicLight, DrawBokehDOF =
+      ScrW, ScrH, CurTime, FrameTime, FrameNumber, EyePos, EyeAngles, MainEyeAngles, LocalToWorld, DynamicLight, DrawBokehDOF
+local Vector, Material, CreateMaterial, GetRenderTargetEx, pairs, tonumber, tobool, vector_origin, angle_zero =
+      Vector, Material, CreateMaterial, GetRenderTargetEx, pairs, tonumber, tobool, vector_origin, angle_zero
+
+local STUDIO_RENDER, STUDIO_DEPTH_MASK =
+      STUDIO_RENDER, bit.bor(STUDIO_SSAODEPTHTEXTURE, STUDIO_SHADOWDEPTHTEXTURE)
+
+local math_Clamp, math_Approach, math_max =
+      math.Clamp, math.Approach, math.max
+
+local cam_Start2D, cam_End2D, cam_Start3D, cam_End3D, cam_IgnoreZ =
+      cam.Start2D, cam.End2D, cam.Start3D, cam.End3D, cam.IgnoreZ
+
+local surface_SetDrawColor, surface_DrawRect, surface_SetMaterial, surface_DrawTexturedRect =
+      surface.SetDrawColor, surface.DrawRect, surface.SetMaterial, surface.DrawTexturedRect
+
+local render_UpdateScreenEffectTexture, render_GetScreenEffectTexture, render_CopyTexture, render_SetToneMappingScaleLinear =
+      render.UpdateScreenEffectTexture, render.GetScreenEffectTexture, render.CopyTexture, render.SetToneMappingScaleLinear
+local render_GetToneMappingScaleLinear, render_PushRenderTarget, render_PopRenderTarget, render_SetMaterial, render_DrawScreenQuad =
+      render.GetToneMappingScaleLinear, render.PushRenderTarget, render.PopRenderTarget, render.SetMaterial, render.DrawScreenQuad
+local render_DepthRange, render_SetStencilEnable, render_SetBlend, render_Clear, render_ClearDepth, render_SetColorModulation =
+      render.DepthRange, render.SetStencilEnable, render.SetBlend, render.Clear, render.ClearDepth, render.SetColorModulation
+local render_SuppressEngineLighting, render_MaterialOverride, render_MaterialOverrideByIndex =
+      render.SuppressEngineLighting, render.MaterialOverride, render.MaterialOverrideByIndex
+
+local system_HasFocus, util_GetModelInfo, bit_band =
+      system.HasFocus, util.GetModelInfo, bit.band
+
+local ENT = FindMetaTable("Entity")
+local ENT_GetTable, ENT_IsValid, ENT_EntIndex, ENT_GetPos, ENT_GetAngles =
+      ENT.GetTable, ENT.IsValid, ENT.EntIndex, ENT.GetPos, ENT.GetAngles
+local ENT_SetPoseParameter, ENT_InvalidateBoneCache, ENT_LookupBone =
+      ENT.SetPoseParameter, ENT.InvalidateBoneCache, ENT.LookupBone
+local ENT_ManipulateBonePosition, ENT_ManipulateBoneAngles, ENT_ManipulateBoneScale =
+      ENT.ManipulateBonePosition, ENT.ManipulateBoneAngles, ENT.ManipulateBoneScale
+local ENT_SetMaterial, ENT_GetMaterials, ENT_SetSubMaterial, ENT_GetModel, ENT_DrawModel =
+      ENT.SetMaterial, ENT.GetMaterials, ENT.SetSubMaterial, ENT.GetModel, ENT.DrawModel
+
+local IMAT = FindMetaTable("IMaterial")
+local IMAT_SetFloat, IMAT_SetTexture =
+      IMAT.SetFloat, IMAT.SetTexture
+
+local CPE = FindMetaTable("CNewParticleEffect")
+local CPE_IsValid, CPE_Render =
+      CPE.IsValid, CPE.Render
+
+local VEC = FindMetaTable("Vector")
+local VEC_Add, VEC_Sub, VEC_Mul, VEC_Set, VEC_Unpack =
+      VEC.Add, VEC.Sub, VEC.Mul, VEC.Set, VEC.Unpack
+
+local ANG = FindMetaTable("Angle")
+local ANG_Forward, ANG_Right, ANG_Up =
+      ANG.Forward, ANG.Right, ANG.Up
+
 local vignette = Material("arc9/bgvignette.png", "mips smooth")
 -- local vignette2 = Material("arc9/bgvignette2.png", "mips smooth")
-
 local scrw, scrh = ScrW(), ScrH()
-
 local bluramt = 0
--- please cache fucking convars
-local arc9_fx_rtblur = GetConVar("arc9_fx_rtblur")
-local arc9_fx_animblur = GetConVar("arc9_fx_animblur")
-local arc9_fx_reloadblur = GetConVar("arc9_fx_reloadblur")
-local arc9_fx_inspectblur = GetConVar("arc9_fx_inspectblur")
-local arc9_cust_blur = GetConVar("arc9_cust_blur")
-local arc9_hud_lightmode = GetConVar("arc9_hud_lightmode")
-local arc9_dev_greenscreen = GetConVar("arc9_dev_greenscreen")
-local arc9_cust_light = GetConVar("arc9_cust_light")
-local arc9_cust_light_brightness = GetConVar("arc9_cust_light_brightness")
-local arc9_dev_benchgun = GetConVar("arc9_dev_benchgun")
-local arc9_fx_adsblur_new = GetConVar("arc9_fx_adsblur_new")
-local arc9_fx_adsblur_always = GetConVar("arc9_fx_adsblur_always")
-local arc9_fx_adsblur_bleeding = GetConVar("arc9_fx_adsblur_bleeding")
-local arc9_fx_adsblur_bleeding_amount = GetConVar("arc9_fx_adsblur_bleeding_amount")
 
+-- convars
+local arc9_fx_rtblur_cvar = GetConVar("arc9_fx_rtblur")
+local arc9_fx_rtblur = arc9_fx_rtblur_cvar and arc9_fx_rtblur_cvar:GetBool() or false
+if arc9_fx_rtblur_cvar then
+    local varname = arc9_fx_rtblur_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_fx_rtblur = tobool(v) end, varname)
+end
 
-local tune_nohdr = Vector(1, 0, 0 )
+local arc9_fx_animblur_cvar = GetConVar("arc9_fx_animblur")
+local arc9_fx_animblur = arc9_fx_animblur_cvar and arc9_fx_animblur_cvar:GetBool() or false
+if arc9_fx_animblur_cvar then
+    local varname = arc9_fx_animblur_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_fx_animblur = tobool(v) end, varname)
+end
+
+local arc9_fx_reloadblur_cvar = GetConVar("arc9_fx_reloadblur")
+local arc9_fx_reloadblur = arc9_fx_reloadblur_cvar and arc9_fx_reloadblur_cvar:GetBool() or false
+if arc9_fx_reloadblur_cvar then
+    local varname = arc9_fx_reloadblur_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_fx_reloadblur = tobool(v) end, varname)
+end
+
+local arc9_fx_inspectblur_cvar = GetConVar("arc9_fx_inspectblur")
+local arc9_fx_inspectblur = arc9_fx_inspectblur_cvar and arc9_fx_inspectblur_cvar:GetBool() or false
+if arc9_fx_inspectblur_cvar then
+    local varname = arc9_fx_inspectblur_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_fx_inspectblur = tobool(v) end, varname)
+end
+
+local arc9_cust_blur_cvar = GetConVar("arc9_cust_blur")
+local arc9_cust_blur = arc9_cust_blur_cvar and arc9_cust_blur_cvar:GetBool() or false
+if arc9_cust_blur_cvar then
+    local varname = arc9_cust_blur_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_cust_blur = tobool(v) end, varname)
+end
+
+local arc9_hud_lightmode_cvar = GetConVar("arc9_hud_lightmode")
+local arc9_hud_lightmode = arc9_hud_lightmode_cvar and arc9_hud_lightmode_cvar:GetBool() or false
+if arc9_hud_lightmode_cvar then
+    local varname = arc9_hud_lightmode_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_hud_lightmode = tobool(v) end, varname)
+end
+
+local arc9_dev_greenscreen_cvar = GetConVar("arc9_dev_greenscreen")
+local arc9_dev_greenscreen = arc9_dev_greenscreen_cvar and arc9_dev_greenscreen_cvar:GetBool() or false
+if arc9_dev_greenscreen_cvar then
+    local varname = arc9_dev_greenscreen_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_dev_greenscreen = tobool(v) end, varname)
+end
+
+local arc9_cust_light_cvar = GetConVar("arc9_cust_light")
+local arc9_cust_light = arc9_cust_light_cvar and arc9_cust_light_cvar:GetBool() or false
+if arc9_cust_light_cvar then
+    local varname = arc9_cust_light_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_cust_light = tobool(v) end, varname)
+end
+
+local arc9_cust_light_brightness_cvar = GetConVar("arc9_cust_light_brightness")
+local arc9_cust_light_brightness = arc9_cust_light_brightness_cvar and arc9_cust_light_brightness_cvar:GetFloat() or 1
+if arc9_cust_light_brightness_cvar then
+    local varname = arc9_cust_light_brightness_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_cust_light_brightness = tonumber(v) or 1 end, varname)
+end
+
+local arc9_dev_benchgun_cvar = GetConVar("arc9_dev_benchgun")
+local arc9_dev_benchgun = arc9_dev_benchgun_cvar and arc9_dev_benchgun_cvar:GetBool() or false
+if arc9_dev_benchgun_cvar then
+    local varname = arc9_dev_benchgun_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_dev_benchgun = tobool(v) end, varname)
+end
+
+local arc9_fx_adsblur_new_cvar = GetConVar("arc9_fx_adsblur_new")
+local arc9_fx_adsblur_new = arc9_fx_adsblur_new_cvar and arc9_fx_adsblur_new_cvar:GetBool() or false
+if arc9_fx_adsblur_new_cvar then
+    local varname = arc9_fx_adsblur_new_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_fx_adsblur_new = tobool(v) end, varname)
+end
+
+local arc9_fx_adsblur_always_cvar = GetConVar("arc9_fx_adsblur_always")
+local arc9_fx_adsblur_always = arc9_fx_adsblur_always_cvar and arc9_fx_adsblur_always_cvar:GetBool() or false
+if arc9_fx_adsblur_always_cvar then
+    local varname = arc9_fx_adsblur_always_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_fx_adsblur_always = tobool(v) end, varname)
+end
+
+local arc9_fx_adsblur_bleeding_cvar = GetConVar("arc9_fx_adsblur_bleeding")
+local arc9_fx_adsblur_bleeding = arc9_fx_adsblur_bleeding_cvar and arc9_fx_adsblur_bleeding_cvar:GetBool() or false
+if arc9_fx_adsblur_bleeding_cvar then
+    local varname = arc9_fx_adsblur_bleeding_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v) arc9_fx_adsblur_bleeding = tobool(v) end, varname)
+end
+
+local arc9_fx_adsblur_bleeding_amount_cvar = GetConVar("arc9_fx_adsblur_bleeding_amount")
+local arc9_fx_adsblur_bleeding_amount = math_Clamp(arc9_fx_adsblur_bleeding_amount_cvar and arc9_fx_adsblur_bleeding_amount_cvar:GetInt() or 1, 1, 60) -- clamp value on assignment instead of every time it's used to save performance
+if arc9_fx_adsblur_bleeding_amount_cvar then
+    local varname = arc9_fx_adsblur_bleeding_amount_cvar:GetName()
+    cvars.AddChangeCallback(varname, function(_, _, v)
+        arc9_fx_adsblur_bleeding_amount = math_Clamp(tonumber(v) or 1, 1, 60)
+    end, varname)
+end
+-- end convars
+
+local subMaterialKeys = {}
+for i = 0, 31 do
+    subMaterialKeys[i] = "SubMaterial" .. i
+end
+
+local tune_nohdr = Vector(1, 0, 0)
+local scratchVec = Vector()
 local divisor = 2
 local lastblurtime = 0
 local lastcust = false
@@ -43,20 +188,19 @@ local mat_cheapblurresult = CreateMaterial("arc9_mat_halfblur", "UnlitGeneric", 
     ["$translucent"] = 1,
     ["$vertexcolor"] = 1,
     ["$ignorez"] = 1,
-} )
+})
 
-
-local function DrawCheapBlur(intensity, self)
+local function DrawCheapBlur(intensity, self, selfTbl)
     if dx11 then return end
 
-    if !fuckopengl and intensity > 0 and system.HasFocus() then
+    if not fuckopengl and intensity > 0 and system_HasFocus() then
         lastblurtime = FrameNumber()
-        lastcust = self:GetCustomize()
+        lastcust = selfTbl.GetCustomize(self)
 
         -- if GetConVar("meow"):GetBool() then
-            render.UpdateScreenEffectTexture()
-            render.SetToneMappingScaleLinear(tune_nohdr) -- Turns off hdr
-            render.PushRenderTarget(rt_cheapblur)
+            render_UpdateScreenEffectTexture()
+            render_SetToneMappingScaleLinear(tune_nohdr) -- Turns off hdr
+            render_PushRenderTarget(rt_cheapblur)
                 -- render.UpdateScreenEffectTexture()
                 -- render.Clear(0,0,0,255)
 
@@ -67,13 +211,77 @@ local function DrawCheapBlur(intensity, self)
                 -- render.SetMaterial(mat_cheapblur)
                 -- render.DrawScreenQuad()
                 DrawBokehDOF(intensity, 1, 0)
-            render.PopRenderTarget()
-            render.SetMaterial(mat_cheapblurresult)
-            render.DrawScreenQuad()
+            render_PopRenderTarget()
+            render_SetMaterial(mat_cheapblurresult)
+            render_DrawScreenQuad()
             -- render.DrawScreenQuadEx( 100, 700, scrw/3, scrh/3 )
         -- else
         --     DrawBokehDOF(intensity * 5, 1, 0)
         -- end
+    end
+end
+
+-- split into a separate function, gmod was complaining about it using too many upvalues :/
+local function preDrawBlurAndLight(self, selfTbl, getsights, sightamount, custdelta, curTime)
+    local blurtarget = 0
+    local blurenable = arc9_fx_rtblur
+    local sightAtt = getsights.atttbl
+
+    local shouldrtblur = sightamount > 0 and blurenable and not selfTbl.Peeking and sightAtt and sightAtt.RTScope and not getsights.Disassociate and not sightAtt.RTCollimator and not sightAtt.RTScopeNoBlur
+
+    if shouldrtblur then
+        blurtarget = 2 * sightamount
+    end
+
+    if (arc9_fx_reloadblur and selfTbl.GetReloading(self) and sightamount < 0.99) or (arc9_fx_animblur and selfTbl.GetReadyTime(self) >= curTime) or (arc9_fx_inspectblur and selfTbl.GetInspecting(self) and sightamount < 0.01) then
+        blurtarget = 1.5
+        shouldrtblur = true
+    end
+
+    if ARC9.StencilFuckery then render_SetStencilEnable(false) end
+
+    if custdelta > 0 then
+        if arc9_cust_blur then
+            blurtarget = 5 * custdelta
+        end
+
+        cam_Start2D()
+            surface_SetDrawColor(15, 15, 15, 180 * custdelta)
+            surface_DrawRect(0, 0, scrw, scrh)
+            surface_SetDrawColor(0, 0, 0, 255 * custdelta)
+            if arc9_hud_lightmode then
+                surface_SetMaterial(vignette)
+                surface_DrawTexturedRect(0, 0, scrw, scrh)
+            end
+
+            if arc9_dev_greenscreen then
+                surface_SetDrawColor(0, 255, 0, 255 * custdelta)
+                surface_DrawRect(0, 0, scrw, scrh)
+            end
+        cam_End2D()
+    end
+
+    if (shouldrtblur and blurenable) or (custdelta > 0 and blurtarget > 0) then
+        DrawCheapBlur(bluramt, self, selfTbl)
+    end
+
+    if ARC9.StencilFuckery then render_SetStencilEnable(true) end
+
+    bluramt = math_Approach(bluramt, blurtarget, FrameTime() * 10)
+
+    if arc9_cust_light and selfTbl.GetCustomize(self) then
+        local light = DynamicLight(ENT_EntIndex(self), true)
+        local up = ANG_Up(EyeAngles())
+        VEC_Mul(up, 12)
+        VEC_Add(up, EyePos())
+        light.pos = up
+        light.r = 255
+        light.g = 255
+        light.b = 255
+        light.brightness = 0.2 * arc9_cust_light_brightness
+        light.Decay = 1000
+        light.Size = 500
+        light.DieTime = curTime + 0.1
     end
 end
 
@@ -85,270 +293,247 @@ local rt_prevm = GetRenderTargetEx("arc9_prevm", 1024, 1024,
     IMAGE_FORMAT_RGBA8888
 )
 
-hook.Add("ShouldDrawAmbientOcclusion", "ARC9.RemoveAO", function(a)
+hook.Add("ShouldDrawAmbientOcclusion", "ARC9.RemoveAO", function()
     -- if lastblurtime == FrameNumber() then return false end -- wanted to do it in every blur case but nah
     if lastblurtime == FrameNumber() and lastcust then return false end
 end)
 
 function SWEP:PreDrawViewModel(vm, weapon, ply, flags)
     flags = flags or STUDIO_RENDER
-    local isDepthPass = ( bit.band( flags, STUDIO_SSAODEPTHTEXTURE ) != 0 || bit.band( flags, STUDIO_SHADOWDEPTHTEXTURE ) != 0 )
+    local isDepthPass = bit_band(flags, STUDIO_DEPTH_MASK) ~= 0
+    local selfTbl = ENT_GetTable(self)
 
-    if ARC9.RTScopeRender and !isDepthPass then -- basically a copy of code in that func for rt barrels but without useless stuff and bad stuff, and also offset of cam in scope
-        self:DoBodygroups(false)
-        vm = self:GetVM()
-        if self.HasSightsPoseparam then
-            vm:SetPoseParameter("sights", self:GetSightAmount())
+    if ARC9.RTScopeRender and not isDepthPass then -- basically a copy of code in that func for rt barrels but without useless stuff and bad stuff, and also offset of cam in scope
+        selfTbl.DoBodygroups(self, false)
+        vm = selfTbl.GetVM(self)
+        if selfTbl.HasSightsPoseparam then
+            ENT_SetPoseParameter(vm, "sights", selfTbl.GetSightAmount(self))
         end
-        self:SetFiremodePose()
-        vm:InvalidateBoneCache()
+        selfTbl.SetFiremodePose(self)
+        ENT_InvalidateBoneCache(vm)
 
         if ARC9_ENABLE_NEWSCOPES_MEOW then
-            local worldvmpos, worldvmang = vm:GetPos(), vm:GetAngles()
-            local scopelength = (IsValid(self.RTScopeModel) and self.RTScopeModel.RTScopeLength or 20) * 0.9
+            local worldvmpos, worldvmang = ENT_GetPos(vm), ENT_GetAngles(vm)
+            local rtScopeMdl = selfTbl.RTScopeModel
+            local scopelength = ((rtScopeMdl and ENT_IsValid(rtScopeMdl) and ENT_GetTable(rtScopeMdl).RTScopeLength) or 20) * 0.9
 
-            worldvmpos = worldvmpos + worldvmang:Forward() * scopelength
+            local fwd = ANG_Forward(worldvmang)
+            VEC_Mul(fwd, scopelength)
+            VEC_Add(worldvmpos, fwd)
 
-            local vmpos, vmang = LocalToWorld(-self.ViewModelPos, -self.ViewModelAng, worldvmpos, worldvmang)
-            vmang = MainEyeAngles()
+            local vmpos = LocalToWorld(-selfTbl.ViewModelPos, -selfTbl.ViewModelAng, worldvmpos, worldvmang)
+            local vmang = MainEyeAngles()
+            local funnyfov = selfTbl.WidescreenFix(self, selfTbl.GetViewModelFOV(self)) / selfTbl.GetRealZoom(self, selfTbl.GetSight(self))
 
-            local funnyfov = self:WidescreenFix(self:GetViewModelFOV()) / self:GetRealZoom(self:GetSight())
-
-            if !arc9_dev_benchgun:GetBool() then cam.Start3D(vmpos, vmang, funnyfov, nil, nil, nil, nil, 2, 16000) end
+            if not arc9_dev_benchgun then
+                cam_Start3D(vmpos, vmang, funnyfov, nil, nil, nil, nil, 2, 16000)
+            end
         else
-            local vmpso, vmagn, spso = self.LastViewModelPos, self.LastViewModelAng, self:GetSightPositions()
+            local vmagn = selfTbl.LastViewModelAng
+            local sx, sy, sz = VEC_Unpack(selfTbl.GetSightPositions(self))
 
-            vmpso = vmpso - vmagn:Forward() * (spso.y - 15) -- i sure do hope fixed number will be good (clueless)
-            vmpso = vmpso - vmagn:Up() * spso.z
-            vmpso = vmpso - vmagn:Right() * spso.x
+            VEC_Set(scratchVec, selfTbl.LastViewModelPos)
+            local fwd = ANG_Forward(vmagn)
+            local up = ANG_Up(vmagn)
+            local right = ANG_Right(vmagn)
+            VEC_Mul(fwd, sy - 15)
+            VEC_Mul(up, sz)
+            VEC_Mul(right, sx)
+            VEC_Sub(scratchVec, fwd)
+            VEC_Sub(scratchVec, up)
+            VEC_Sub(scratchVec, right)
 
-            if !arc9_dev_benchgun:GetBool() then cam.Start3D(vmpso, nil, ARC9.RTScopeRenderFOV * 0.85, nil, nil, nil, nil, 3, 16000) end
+            if not arc9_dev_benchgun then
+                cam_Start3D(scratchVec, nil, ARC9.RTScopeRenderFOV * 0.85, nil, nil, nil, nil, 3, 16000)
+            end
         end
-        render.DepthRange( 0.1, 0.1 )
+        render_DepthRange(0.1, 0.1)
 
         return
     end
 
     if ARC9.PresetCam then
-        self:DoBodygroups(false)
+        selfTbl.DoBodygroups(self, false)
         return
     end
 
-    local getsights = self:GetSight()
-    local sightamount = self:GetSightAmount()
-    local custdelta = self.CustomizeDelta
+    local getsights = selfTbl.GetSight(self)
+    local sightamount = selfTbl.GetSightAmount(self)
+    local custdelta = selfTbl.CustomizeDelta
+    local curTime = CurTime()
 
-    if !isDepthPass then
-    	local blurtarget = 0
+    if not isDepthPass then
+    	preDrawBlurAndLight(self, selfTbl, getsights, sightamount, custdelta, curTime)
+    end
 
-    	local blurenable = arc9_fx_rtblur:GetBool()
+    selfTbl.DoPoseParams(self)
+    selfTbl.DoBodygroups(self, false)
 
-    	local shouldrtblur = sightamount > 0 and blurenable and !self.Peeking and getsights.atttbl and getsights.atttbl.RTScope and !getsights.Disassociate and !getsights.atttbl.RTCollimator and !getsights.atttbl.RTScopeNoBlur
+    local bipodamount = selfTbl.GetBipodAmount(self)
+    vm = selfTbl.GetVM(self)
+    if not vm or not ENT_IsValid(vm) then return end
 
-    	if shouldrtblur then
-    	    blurtarget = 2 * sightamount
-    	end
+    local sightsPoseVal = math_max(sightamount, bipodamount, custdelta)
+    if selfTbl.HasSightsPoseparam then
+        ENT_SetPoseParameter(vm, "sights", sightsPoseVal)
+    end
 
-    	if (arc9_fx_reloadblur:GetBool() and self:GetReloading() and sightamount < 0.99) or (arc9_fx_animblur:GetBool() and self:GetReadyTime() >= CurTime()) or (arc9_fx_inspectblur:GetBool() and self:GetInspecting() and sightamount < 0.01) then
-    	    blurtarget = 1.5
-    	    shouldrtblur = true
-    	end
+    local bonemods = selfTbl.GetValue(self, "BoneMods")
+    if bonemods then
+        for bonename, k in pairs(bonemods) do
+            local boneindex = ENT_LookupBone(vm, bonename)
+            if not boneindex then continue end
 
-        if ARC9.StencilFuckery then render.SetStencilEnable(false) end
-
-    	if custdelta > 0 then
-    	    if arc9_cust_blur:GetBool() then
-    	        blurtarget = 5 * custdelta
-    	    end
-
-    	    cam.Start2D()
-            	surface.SetDrawColor(15, 15, 15, 180 * custdelta)
-            	surface.DrawRect(0, 0, scrw, scrh)
-            	surface.SetDrawColor(0, 0, 0, 255 * custdelta)
-            	if arc9_hud_lightmode:GetBool() then
-                	surface.SetMaterial(vignette)
-                	surface.DrawTexturedRect(0, 0, scrw, scrh)
-            	end
-
-            	if arc9_dev_greenscreen:GetBool() then
-                	-- print(GetConVar("mat_bloom_scalefactor_scalar"):SetFloat())
-                	surface.SetDrawColor(0, 255, 0, 255 * custdelta)
-                	surface.DrawRect(0, 0, scrw, scrh)
-            	end
-        	cam.End2D()
-    	end
-
-    	if ((shouldrtblur and blurenable) or (custdelta > 0 and blurtarget > 0)) then
-        	DrawCheapBlur(bluramt, self)
-    	end
-
-        if ARC9.StencilFuckery then render.SetStencilEnable(true) end
-
-    	bluramt = math.Approach(bluramt, blurtarget, FrameTime() * 10)
-
-    	if arc9_cust_light:GetBool() and self:GetCustomize() then
-        	-- render.SuppressEngineLighting(true)
-        	-- render.ResetModelLighting(0.6, 0.6, 0.6)
-        	-- render.SetModelLighting(BOX_TOP, 4, 4, 4)
-        	local light = DynamicLight(self:EntIndex(), true)
-        	light.pos = EyePos() + (EyeAngles():Up() * 12)
-        	light.r = 255
-        	light.g = 255
-        	light.b = 255
-        	light.brightness = 0.2 * (arc9_cust_light_brightness:GetFloat())
-        	light.Decay = 1000
-        	light.Size = 500
-        	light.DieTime = CurTime() + 0.1
-    	-- else
-    	--     render.SuppressEngineLighting(false)
-    	--     render.ResetModelLighting(1,1,1)
+            ENT_ManipulateBonePosition(vm, boneindex, k.pos or vector_origin)
+            ENT_ManipulateBoneAngles(vm, boneindex, k.ang or angle_zero)
+            ENT_ManipulateBoneScale(vm, boneindex, k.scale or vector_origin)
         end
     end
 
-    self:DoPoseParams()
-    self:DoBodygroups(false)
+    local vmfov = selfTbl.GetViewModelFOV(self)
+    selfTbl.ViewModelFOV = vmfov
 
-    local bipodamount = self:GetBipodAmount()
-    vm = self:GetVM()
-    if !IsValid(vm) then return end
-
-    if self.HasSightsPoseparam then
-        vm:SetPoseParameter("sights", math.max(sightamount, bipodamount, custdelta))
-    end
-
-    local bonemods = self:GetValue("BoneMods")
-
-    if bonemods then for _, k in pairs(bonemods) do
-        local boneindex = vm:LookupBone(i)
-
-        if !boneindex then continue end
-
-        vm:ManipulateBonePosition(boneindex, k.pos or vector_origin)
-        vm:ManipulateBoneAngles(boneindex, k.ang or angle_zero)
-        vm:ManipulateBoneScale(boneindex, k.scale or vector_origin)
-    end end
-
-    local vmfov = self:GetViewModelFOV()
-
-    self.ViewModelFOV = vmfov
-
-    if !isDepthPass then
-    	if !ARC9_ENABLE_NEWSCOPES_MEOW and self:GetHolsterTime() < CurTime() and self.RTScope and sightamount > 0 then
-    	    self:DoRTScope(vm, self:GetTable(), sightamount > 0)
+    if not isDepthPass then
+    	if not ARC9_ENABLE_NEWSCOPES_MEOW and selfTbl.GetHolsterTime(self) < curTime and selfTbl.RTScope and sightamount > 0 then
+    	    selfTbl.DoRTScope(self, vm, selfTbl, true)
     	end
 
-        if arc9_fx_adsblur_bleeding:GetBool() then
-            render.UpdateScreenEffectTexture()
-            render.CopyTexture(render.GetScreenEffectTexture(), rt_prevm)
+        if arc9_fx_adsblur_bleeding then
+            render_UpdateScreenEffectTexture()
+            render_CopyTexture(render_GetScreenEffectTexture(), rt_prevm)
         end
     end
 
     -- this if block is breaking the rendering context for several guns.
     -- ie: guns render behind hands and also render in world context, clipping into geometry
     -- disabling fixes that render issue outright but it's breaking Cheap RT Scopes' zooming.
-    if !arc9_dev_benchgun:GetBool() then
+    if not arc9_dev_benchgun then
         -- We use EyePos/EyeAngles so it doesn't inherit the zoomed world camera
         -- vmfov is whatever GetViewModelFOV() returns, it will remain static regardless of zoom
-        cam.Start3D(EyePos(), EyeAngles(), self:WidescreenFix(vmfov), nil, nil, nil, nil, 0.5, 10000)
-        render.DepthRange( 0.0, 0.1 )
+        cam_Start3D(EyePos(), EyeAngles(), selfTbl.WidescreenFix(self, vmfov), nil, nil, nil, nil, 0.5, 10000)
+        render_DepthRange(0.0, 0.1)
     end
 
-	self.RenderingRTScope = false
+	selfTbl.RenderingRTScope = false
 
-	if !isDepthPass and IsValid(vm) then
-    	vm:SetSubMaterial()
-        if !self.VMMaterialAmount and vm:GetMaterials() then
-            local getmdl = vm:GetModel()
-            if !getmdl or !util.GetModelInfo(getmdl) then return end
-            self.VMMaterialAmount = util.GetModelInfo(getmdl).MaterialCount
+	if not isDepthPass then
+        local gpv = selfTbl.GetProcessedValue
+    	ENT_SetSubMaterial(vm)
+
+        local matCount = selfTbl.VMMaterialAmount
+        if not matCount and ENT_GetMaterials(vm) then
+            local getmdl = ENT_GetModel(vm)
+            local minfo = getmdl and util_GetModelInfo(getmdl)
+            if not minfo then return end
+            matCount = minfo.MaterialCount
+            selfTbl.VMMaterialAmount = matCount
         end
 
-    	for ind = 0, self.VMMaterialAmount or 31 do
-    	    local val = self:GetProcessedValue("SubMaterial" .. ind, true)
+    	for ind = 0, matCount or 31 do
+    	    local key = subMaterialKeys[ind] or ("SubMaterial" .. ind)
+            local val = gpv(self, key, true)
     	    if val then
-    	        vm:SetSubMaterial(ind, val)
+    	        ENT_SetSubMaterial(vm, ind, val)
     	    end
     	end
 
-    	vm:SetMaterial(self:GetProcessedValue("Material", true))
+    	ENT_SetMaterial(vm, gpv(self, "Material", true))
 	end
 
-    render.DepthRange( 0.0, 0.1 )
-    if ARC9.PresetCam or custdelta > 0 then cam.IgnoreZ(true) end
+    render_DepthRange(0.0, 0.1)
+    if ARC9.PresetCam or custdelta > 0 then cam_IgnoreZ(true) end
 
-    self:SetFiremodePose()
+    selfTbl.SetFiremodePose(self)
 
-    if self.HasSightsPoseparam then
-        vm:SetPoseParameter("sights", math.max(sightamount, bipodamount, custdelta))
+    if selfTbl.HasSightsPoseparam then
+        ENT_SetPoseParameter(vm, "sights", sightsPoseVal)
     end
 
-    vm:InvalidateBoneCache()
+    ENT_InvalidateBoneCache(vm)
 
-    if sightamount > 0.75 and getsights.FlatScope and !getsights.FlatScopeKeepVM then
-        render.SetBlend(0)
+    if sightamount > 0.75 and getsights.FlatScope and not getsights.FlatScopeKeepVM then
+        render_SetBlend(0)
     end
 end
 
 function SWEP:ViewModelDrawn(ent, flags)
 	flags = flags or STUDIO_RENDER
-    local isDepthPass = ( bit.band( flags, STUDIO_SSAODEPTHTEXTURE ) != 0 || bit.band( flags, STUDIO_SHADOWDEPTHTEXTURE ) != 0 )
+    local isDepthPass = bit_band(flags, STUDIO_DEPTH_MASK) ~= 0
+    local selfTbl = ENT_GetTable(self)
 
-    self.StoredVMAngles = self:GetCameraControl()
-    self:DrawCustomModel(false, nil, nil, flags)
-    render.DepthRange( 0.0, 0.1 )
+    selfTbl.StoredVMAngles = selfTbl.GetCameraControl(self)
+    selfTbl.DrawCustomModel(self, false, nil, nil, flags)
+    render_DepthRange(0.0, 0.1)
 
-    self:DoRHIK()
+    selfTbl.DoRHIK(self)
 
     if ARC9.RTScopeRender then
-        if !isDepthPass then
-            render.DepthRange( 0.1, 0.1 )
-            self:DrawLasers(false)
-            render.DepthRange( 0.0, 0.1 )
+        if not isDepthPass then
+            render_DepthRange(0.1, 0.1)
+            selfTbl.DrawLasers(self, false)
+            render_DepthRange(0.0, 0.1)
         end
         return
     end
 
-    self:PreDrawThirdArm()
+    selfTbl.PreDrawThirdArm(self)
 
-	if !isDepthPass then
-    	self:DrawFlashlightsVM()
-
-    	self:DrawLasers(false)
+	if not isDepthPass then
+    	selfTbl.DrawFlashlightsVM(self)
+    	selfTbl.DrawLasers(self, false)
 	end
 
-    local vm = self:GetVM()
-    if !IsValid(vm) then return end
-    vm:SetMaterial("")
+    local vm = selfTbl.GetVM(self)
+    if not vm or not ENT_IsValid(vm) then return end
+
+    ENT_SetMaterial(vm, "")
 	for ind = 0, 31 do
-		vm:SetSubMaterial(ind, "")
+		ENT_SetSubMaterial(vm, ind, "")
 	end
 
-    if !isDepthPass then
-	    local newpcfs = {}
-
-	    for _, pcf in ipairs(self.PCFs) do
-	        if IsValid(pcf) then
-	            pcf:Render()
-	            table.insert(newpcfs, pcf)
-	        end
-	    end
-
-	    if !inrt then self.PCFs = newpcfs end
+    if not isDepthPass then
+        local pcfs = selfTbl.PCFs
+        if pcfs then
+            local writeIdx = 0
+            local count = #pcfs
+            for i = 1, count do
+                local pcf = pcfs[i]
+                if pcf and CPE_IsValid(pcf) then
+                    CPE_Render(pcf)
+                    writeIdx = writeIdx + 1
+                    if writeIdx ~= i then
+                        pcfs[writeIdx] = pcf
+                    end
+                end
+            end
+            for i = writeIdx + 1, count do
+                pcfs[i] = nil
+            end
+        end
 	end
 
-    local newfx = {}
-
-    for _, fx in ipairs(self.ActiveEffects) do
-        if IsValid(fx) then
-            if !fx.VMContext then continue end
-            fx:DrawModel()
-            table.insert(newfx, fx)
+    local activeEffects = selfTbl.ActiveEffects
+    if activeEffects then
+        local writeIdx = 0
+        local count = #activeEffects
+        for i = 1, count do
+            local fx = activeEffects[i]
+            if fx and ENT_IsValid(fx) then
+                if ENT_GetTable(fx).VMContext then
+                    ENT_DrawModel(fx)
+                    writeIdx = writeIdx + 1
+                    if writeIdx ~= i then
+                        activeEffects[writeIdx] = fx
+                    end
+                end
+            end
+        end
+        for i = writeIdx + 1, count do
+            activeEffects[i] = nil
         end
     end
 
-    if ARC9.StencilFuckery then render.SetStencilEnable(false) end
-
-    if !inrt then self.ActiveEffects = newfx end
+    if ARC9.StencilFuckery then render_SetStencilEnable(false) end
 end
 
 local mat_dof = Material( "effects/arc9/vm_dof" )
@@ -366,21 +551,24 @@ local rt_dofmask = GetRenderTargetEx("arc9_optic_dof_mask2", scrw, scrh,
 )
 
 local function shadersetstaticvalues()
-    mat_dof:SetFloat("$c1_x", 1 / scrw)
-    mat_dof:SetFloat("$c1_y", 1 / scrh)
-    mat_dof:SetTexture("$texture1", rt_dofmask:GetName())
-    mat_dof:SetFloat("$c0_x", 0) -- 8
-    mat_dof:SetFloat("$c0_y", 0.07)
+    local invW, invH = 1 / scrw, 1 / scrh
+    local maskName = rt_dofmask:GetName()
 
-    mat_dof2:SetFloat("$c1_x", 1 / scrw)
-    mat_dof2:SetFloat("$c1_y", 1 / scrh)
-    mat_dof2:SetTexture("$texture1", rt_dofmask:GetName())
-    mat_dof2:SetFloat("$c0_x", 0) -- 8
-    mat_dof2:SetFloat("$c0_y", 0.07)
-    mat_dof2:SetFloat("$c2_w", math.Clamp(arc9_fx_adsblur_bleeding_amount:GetInt(), 1, 60))
+    IMAT_SetFloat(mat_dof, "$c1_x", invW)
+    IMAT_SetFloat(mat_dof, "$c1_y", invH)
+    IMAT_SetTexture(mat_dof, "$texture1", maskName)
+    IMAT_SetFloat(mat_dof, "$c0_x", 0) -- 8
+    IMAT_SetFloat(mat_dof, "$c0_y", 0.07)
 
-    mat_dof_debug:SetTexture("$texture1", rt_dofmask:GetName())
-    mat_dof_debug:SetFloat("$c0_y", 0.07)
+    IMAT_SetFloat(mat_dof2, "$c1_x", invW)
+    IMAT_SetFloat(mat_dof2, "$c1_y", invH)
+    IMAT_SetTexture(mat_dof2, "$texture1", maskName)
+    IMAT_SetFloat(mat_dof2, "$c0_x", 0) -- 8
+    IMAT_SetFloat(mat_dof2, "$c0_y", 0.07)
+    IMAT_SetFloat(mat_dof2, "$c2_w", arc9_fx_adsblur_bleeding_amount)
+
+    IMAT_SetTexture(mat_dof_debug, "$texture1", maskName)
+    IMAT_SetFloat(mat_dof_debug, "$c0_y", 0.07)
 end
 
 timer.Simple(5, shadersetstaticvalues)
@@ -394,25 +582,28 @@ local mat_dof_mask_debug = CreateMaterial("mat_debug_arc9_dof_mask5", "UnlitGene
 } )
 
 function SWEP:DoFSetParams(strength)
-    mat_dof:SetFloat("$c0_x", 8 * strength)
+    local selfTbl = ENT_GetTable(self)
+    local s8 = 8 * strength
+    IMAT_SetFloat(mat_dof, "$c0_x", s8)
 
-    if arc9_fx_adsblur_bleeding:GetBool() then
-        mat_dof2:SetFloat("$c0_x", 8 * strength)
-        mat_dof2:SetFloat("$c2_w", math.Clamp(arc9_fx_adsblur_bleeding_amount:GetInt(), 1, 60) * strength)
+    if arc9_fx_adsblur_bleeding then
+        IMAT_SetFloat(mat_dof2, "$c0_x", s8)
+        IMAT_SetFloat(mat_dof2, "$c2_w", arc9_fx_adsblur_bleeding_amount * strength)
     end
 
-    if !self.DoFDepthSet then
-        mat_dof:SetFloat("$c0_y", self.DoFDepth or 0.07)
-        mat_dof2:SetFloat("$c0_y", self.DoFDepth or 0.07)
+    if not selfTbl.DoFDepthSet then
+        local depth = selfTbl.DoFDepth or 0.07
         shadersetstaticvalues()
-        self.DoFDepthSet = true
+        IMAT_SetFloat(mat_dof, "$c0_y", depth)
+        IMAT_SetFloat(mat_dof2, "$c0_y", depth)
+        selfTbl.DoFDepthSet = true
     end
 end
 
 function SWEP:RenderDoF()
-    render.UpdateScreenEffectTexture()
-    render.SetMaterial(arc9_fx_adsblur_bleeding:GetBool() and mat_dof2 or mat_dof)
-    render.DrawScreenQuad()
+    render_UpdateScreenEffectTexture()
+    render_SetMaterial(arc9_fx_adsblur_bleeding and mat_dof2 or mat_dof)
+    render_DrawScreenQuad()
 
     -- if ARC9.Dev(2) then
         -- render.SetMaterial(mat_dof_debug)
@@ -436,154 +627,198 @@ local retardedglassnames = {
 }
 
 local function findglassmat(scopemodel)
-    local glassindex
-
-    local mats = {}
-    for k, v in pairs( scopemodel:GetMaterials() or {} ) do -- table.flip
-        mats[ v ] = k
+    local modelTbl = ENT_GetTable(scopemodel)
+    if modelTbl.RTGlassMatIndex then
+        return modelTbl.RTGlassMatIndex
     end
 
-    if scopemodel.RTScope_BlurTexture then glassindex = mats[scopemodel.RTScope_BlurTexture]
+    local glassindex
+    local mats = {}
+    local rawMats = ENT_GetMaterials(scopemodel)
+    if rawMats then
+        for k = 1, #rawMats do
+            mats[rawMats[k]] = k
+        end
+    end
+
+    local blurTex = modelTbl.RTScope_BlurTexture
+    if blurTex then
+        glassindex = mats[blurTex]
     else
         glassindex = mats["effects/arc9/rtglass"] or mats["effects/arc9/rtglasssquare"] or mats["effects/arc9/rt"]
 
-        if !glassindex then
-            for _, v in ipairs(retardedglassnames) do
-                glassindex = mats[v]
+        if not glassindex then
+            for i = 1, #retardedglassnames do
+                glassindex = mats[retardedglassnames[i]]
                 if glassindex then break end
             end
         end
 
-        if !glassindex and scopemodel.atttbl and scopemodel.atttbl.RTScopeSubmatIndex then
-            glassindex = scopemodel.atttbl.RTScopeSubmatIndex + 1
+        if not glassindex then
+            local atttbl = modelTbl.atttbl
+            if atttbl and atttbl.RTScopeSubmatIndex then
+                glassindex = atttbl.RTScopeSubmatIndex + 1
+            end
         end
     end
 
-    scopemodel.RTGlassMatIndex = glassindex or 1
-    return glassindex or 1
+    glassindex = glassindex or 1
+    modelTbl.RTGlassMatIndex = glassindex
+    return glassindex
 end
 
 function SWEP:RenderDoFMask(clear)
-    render.PushRenderTarget(rt_dofmask)
-        render.Clear(0, 0, 0, 255)
-    render.PopRenderTarget()
+    render_PushRenderTarget(rt_dofmask)
+        render_Clear(0, 0, 0, 255)
+    render_PopRenderTarget()
 
     if clear then return end
 
-    local scopemodel = self.RTScopeModel
-    if scopemodel == self:GetVM() then return end
+    local selfTbl = ENT_GetTable(self)
+    local scopemodel = selfTbl.RTScopeModel
+    if scopemodel == selfTbl.GetVM(self) then return end
 
-    local forcedmodel = self.RTScope_ForceBlurModel
+    local forcedmodel = selfTbl.RTScope_ForceBlurModel
+    local validScope = scopemodel and ENT_IsValid(scopemodel)
+    local validForced = forcedmodel and ENT_IsValid(forcedmodel)
 
-    if IsValid(scopemodel) or IsValid(forcedmodel) then
-        render.PushRenderTarget(rt_dofmask)
+    if validScope or validForced then
+        render_PushRenderTarget(rt_dofmask)
             -- render.Clear(0, 0, 0, 255)
-            local oldtune = render.GetToneMappingScaleLinear()
-            render.SetToneMappingScaleLinear(tune_nohdr) -- Turns off hdr
-            render.ClearDepth(false)
+            local oldtune = render_GetToneMappingScaleLinear()
+            render_SetToneMappingScaleLinear(tune_nohdr) -- Turns off hdr
+            render_ClearDepth(false)
             -- local sa = self:GetSightAmount()
             -- sa = sa * sa
-            local sa = 1
-            render.SetColorModulation(sa, sa, sa)
-            render.SuppressEngineLighting(true)
+            -- local sa = 1
+            render_SetColorModulation(1, 1, 1)
+            render_SuppressEngineLighting(true)
 
-            if IsValid(scopemodel) then
-                render.MaterialOverride(mat_black)
-                render.MaterialOverrideByIndex(findglassmat(scopemodel) - 1, mat_white)
-
-                scopemodel:DrawModel()
+            if validScope then
+                render_MaterialOverride(mat_black)
+                render_MaterialOverrideByIndex(findglassmat(scopemodel) - 1, mat_white)
+                ENT_DrawModel(scopemodel)
             end
 
-            if IsValid(forcedmodel) then
-                render.MaterialOverrideByIndex(nil, nil)
-                render.MaterialOverride()
-                render.MaterialOverride(mat_black)
-                render.MaterialOverrideByIndex(findglassmat(forcedmodel) - 1, mat_white)
-
-                forcedmodel:DrawModel()
+            if validForced then
+                render_MaterialOverrideByIndex(nil, nil)
+                -- render_MaterialOverride()
+                render_MaterialOverride(mat_black)
+                render_MaterialOverrideByIndex(findglassmat(forcedmodel) - 1, mat_white)
+                ENT_DrawModel(forcedmodel)
             end
 
-            render.SetColorModulation(1, 1, 1)
-            render.SuppressEngineLighting(false)
-            render.MaterialOverride()
-            render.MaterialOverrideByIndex(nil, nil)
-        render.PopRenderTarget()
+            render_SetColorModulation(1, 1, 1)
+            render_SuppressEngineLighting(false)
+            render_MaterialOverride()
+            render_MaterialOverrideByIndex(nil, nil)
+        render_PopRenderTarget()
 
-        render.SetToneMappingScaleLinear(oldtune) -- Resets hdr
+        render_SetToneMappingScaleLinear(oldtune) -- Resets hdr
     end
 end
 
 
 function SWEP:PostDrawViewModel(vm, weapon, ply, flags)
-    if !IsValid(self:GetVM()) then return end
+    local selfTbl = ENT_GetTable(self)
+    local realVM = selfTbl.GetVM(self)
+    if not realVM or not ENT_IsValid(realVM) then return end
+
 	flags = flags or STUDIO_RENDER
-    local isDepthPass = ( bit.band( flags, STUDIO_SSAODEPTHTEXTURE ) != 0 || bit.band( flags, STUDIO_SHADOWDEPTHTEXTURE ) != 0 )
+    local isDepthPass = bit_band(flags, STUDIO_DEPTH_MASK) ~= 0
+    local inrt = ARC9.RTScopeRender
 
-    inrt = ARC9.RTScopeRender
+    if not isDepthPass then
+        selfTbl.DrawTranslucentPass(self)
 
-    if !isDepthPass then self:DrawTranslucentPass() end
+        local muzzPCFs = selfTbl.MuzzPCFs
+        if muzzPCFs then
+            if inrt then render_DepthRange(0.1, 0.1) end
 
-	if !isDepthPass then
-    	local newmzpcfs = {}
-        if ARC9.RTScopeRender then render.DepthRange( 0.1, 0.1 ) end
-
-    	for _, pcf in ipairs(self.MuzzPCFs) do
-    	    if IsValid(pcf) then
-    	        pcf:Render()
-    	        table.insert(newmzpcfs, pcf)
-    	    end
-    	end
-
-    	if !inrt then self.MuzzPCFs = newmzpcfs end
-	end
+            if inrt then
+                for i = 1, #muzzPCFs do
+                    local pcf = muzzPCFs[i]
+                    if pcf and CPE_IsValid(pcf) then
+                        CPE_Render(pcf)
+                    end
+                end
+            else
+                local writeIdx = 0
+                local count = #muzzPCFs
+                for i = 1, count do
+                    local pcf = muzzPCFs[i]
+                    if pcf and CPE_IsValid(pcf) then
+                        CPE_Render(pcf)
+                        writeIdx = writeIdx + 1
+                        if writeIdx ~= i then
+                            muzzPCFs[writeIdx] = pcf
+                        end
+                    end
+                end
+                for i = writeIdx + 1, count do
+                    muzzPCFs[i] = nil
+                end
+            end
+        end
+    end
 
     if ARC9.PresetCam then return end
 
-    cam.IgnoreZ(false)
-    render.SetBlend(1)
+    cam_IgnoreZ(false)
+    render_SetBlend(1)
 
     -- had to disable this too cause it saying throws errors after removing the earlier cam.Start3D which creates the render context issue.
-    if !arc9_dev_benchgun:GetBool() then
-        render.DepthRange( 0.0, 1.0 ) -- Reset depth range
-        cam.End3D()
+    if not arc9_dev_benchgun then
+        render_DepthRange(0.0, 1.0) -- Reset depth range
+        cam_End3D()
     end
 
-    if isDepthPass then return end
-    if inrt then return end
+    if isDepthPass or inrt then return end
 
     local sigt, sa, notactivemask
-    local activedof = !fuckopengl and !ARC9.IntelGPUDetected and arc9_fx_adsblur_new:GetBool()
+    local activedof = not fuckopengl and not ARC9.IntelGPUDetected and arc9_fx_adsblur_new
 
     if activedof then
-        sigt = self:GetSight()
-        sa = self:GetSightAmount()
-        notactivemask = !(sigt.atttbl and (sigt.atttbl.RTScope or sigt.atttbl.RTScopeNew_BlurTexture))
+        sigt = selfTbl.GetSight(self)
+        sa = selfTbl.GetSightAmount(self)
+        local sightAtt = sigt.atttbl
+        notactivemask = not (sightAtt and (sightAtt.RTScope or sightAtt.RTScopeNew_BlurTexture))
     end
 
-    self.RenderingHolosight = false
-    cam.Start3D(nil, nil, self:WidescreenFix(self.GetViewModelFOV and self:GetViewModelFOV() or 90), nil, nil, nil, nil, 1, 10000)
-    if self.VModel then
-        for _, model in ipairs(self.VModel) do
-            local atttbl = model.atttbl or model.slottbl:GetFinalAttTable(slottbl)
+    selfTbl.RenderingHolosight = false
+    local getVMFOV = selfTbl.GetViewModelFOV
+    cam_Start3D(nil, nil, selfTbl.WidescreenFix(self, getVMFOV and getVMFOV(self) or 90), nil, nil, nil, nil, 1, 10000)
 
-            if atttbl.HoloSight then
-                self:DoHolosight(model, atttbl)
+    local vmodel = selfTbl.VModel
+    if vmodel then
+        local getFinalAttTable = selfTbl.GetFinalAttTable
+        local doHolosight = selfTbl.DoHolosight
+
+        for i = 1, #vmodel do
+            local model = vmodel[i]
+            if model and ENT_IsValid(model) then
+                local modelTbl = ENT_GetTable(model)
+                local atttbl = modelTbl.atttbl or getFinalAttTable(self, modelTbl.slottbl)
+
+                if atttbl and atttbl.HoloSight then
+                    doHolosight(self, model, atttbl)
+                end
             end
         end
 
         if activedof then
-            self:RenderDoFMask(notactivemask)
+            selfTbl.RenderDoFMask(self, notactivemask)
         end
     end
-    cam.End3D()
+    cam_End3D()
 
     if activedof then
-        if arc9_fx_adsblur_always:GetBool() then sa = 1 * (1 - self.CustomizeDelta) end
+        if arc9_fx_adsblur_always then sa = 1 - selfTbl.CustomizeDelta end
 
         if sa > 0 then
             if sigt.Blur == false then sa = 0 end
-            self:DoFSetParams(sa)
-            -- self:RenderDoF()
+            selfTbl.DoFSetParams(self, sa)
+            -- selfTbl.RenderDoF(self)
         end
     end
 end

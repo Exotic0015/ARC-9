@@ -1,3 +1,14 @@
+local getmetatable =
+      getmetatable
+
+local ENT = FindMetaTable("Entity")
+local ENT_GetOwner, ENT_IsValid =
+      ENT.GetOwner, ENT.IsValid
+
+local PLY = FindMetaTable("Player")
+local PLY_GetViewModel =
+      PLY.GetViewModel
+
 function SWEP:SanityCheck()
     if !IsValid(self) then return false end
     if !IsValid(self:GetOwner()) then return false end
@@ -26,7 +37,7 @@ function SWEP:PlayTranslatedSound(soundtab)
 
         local cfilter = nil
         if SERVER and !sp then cfilter = soundtab.networktoeveryone and ARC9.EveryoneRecipientFilter end
-        
+
         entityEmitSound(self,
             soundtab.sound,
             soundtab.level,
@@ -46,7 +57,7 @@ if SERVER then
     end
 else
     local isSingleplayer = game.SinglePlayer()
-    
+
     function SWEP:PredictionFilter()
         return isSingleplayer
     end
@@ -61,10 +72,9 @@ function SWEP:GetWM()
 end
 
 function SWEP:GetVM()
-    local owner = self:GetOwner()
-    if !IsValid(owner) then return nil end
-    if !owner:IsPlayer() then return nil end
-    return owner:GetViewModel()
+    local owner = ENT_GetOwner(self)
+    if not owner or not ENT_IsValid(owner) or getmetatable(owner) ~= PLY then return nil end
+    return PLY_GetViewModel(owner)
 end
 
 function SWEP:Curve(x)
@@ -118,7 +128,7 @@ function SWEP:Solve2PartIK(start_p, end_p, length0, length1, sign, angs)
 
     local axis = diff * 1
     axis:Normalize()
-    
+
     local torsoang = vector_up:Angle()
 
     local Joint0 = Angle(angle0 + angle2, angle3, 0)
@@ -126,11 +136,11 @@ function SWEP:Solve2PartIK(start_p, end_p, length0, length1, sign, angs)
     local asdot = -vector_up:Dot(torsoang:Up())
     local diffa = math.deg(math.acos(asdot)) + (sign < 0 and -0 or 0)
     local diffa2 = 90 + (sign > 0 and -30 or 30)
-    
+
     local tors = torsoang:Up()
     local torsoright = -math.deg(math.atan2(tors.x, tors.y)) - 120 - 60 * sign
     torsoright = angs.y + 120 * sign
-    
+
     Joint0:RotateAroundAxis(Joint0:Forward(), diffa2)
     Joint0:RotateAroundAxis(axis, angle3 - torsoright)
     local ang1 = -(-Joint0)
@@ -216,7 +226,7 @@ if CLIENT then
     local function lScaleFOVByWidthRatio( fovDegrees, ratio )
         return mathatan(mathtan( fovDegrees * halfrad ) * ratio) * degbypi
     end
-    
+
     function SWEP:ScaleFOVByWidthRatio( fovDegrees, ratio )
         return lScaleFOVByWidthRatio(fovDegrees, ratio)
     end

@@ -1,3 +1,31 @@
+local type, tostring, tonumber, next, pairs, ipairs, CurTime, isfunction, MOVETYPE_NOCLIP, getmetatable =
+      type, tostring, tonumber, next, pairs, ipairs, CurTime, isfunction, MOVETYPE_NOCLIP, getmetatable
+
+local engine_TickCount, hook_Run =
+      engine.TickCount, hook.Run
+
+local math_min, math_max, math_Clamp =
+      math.min, math.max, math.Clamp
+
+local table_Copy, table_Merge =
+      table.Copy, table.Merge
+
+local ENT = FindMetaTable("Entity")
+local ENT_GetTable, ENT_OnGround, ENT_GetMoveType, ENT_GetAbsVelocity, ENT_IsValid, ENT_GetOwner =
+      ENT.GetTable, ENT.OnGround, ENT.GetMoveType, ENT.GetAbsVelocity, ENT.IsValid, ENT.GetOwner
+
+local PLY = FindMetaTable("Player")
+local PLY_IsSprinting, PLY_Crouching, PLY_GetWalkSpeed =
+      PLY.IsSprinting, PLY.Crouching, PLY.GetWalkSpeed
+
+local WPN = FindMetaTable("Weapon")
+local WPN_Clip1, WPN_Clip2, WPN_GetNextPrimaryFire =
+      WPN.Clip1, WPN.Clip2, WPN.GetNextPrimaryFire
+
+local VEC = FindMetaTable("Vector")
+local VEC_Length2D =
+      VEC.Length2D
+
 --[[ Class Cache ]]--
 
 SWEP.StatCache = {}
@@ -28,6 +56,10 @@ SWEP.PV_Melee = 0
 SWEP.WantToInvalidateCache = false
 
 local cvarArc9Truenames = GetConVar("arc9_truenames")
+local arc9Truenames = cvarArc9Truenames:GetBool()
+cvars.AddChangeCallback(cvarArc9Truenames:GetName(), function(_, _, newval)
+    arc9Truenames = tobool(newval)
+end, "arc9_truenames")
 
 --[[ Variables ]]--
 
@@ -50,9 +82,14 @@ local quickmodifiers = {
 local quickmodifiers_values = {}
 
 for k, cv in pairs(quickmodifiers) do
-    quickmodifiers_values[k] = cv:GetFloat()
+    local initVal = cv:GetFloat()
+    local shouldInvert = k == "MalfunctionMeanShotsToFail"
+
+    quickmodifiers_values[k] = shouldInvert and (1 / math_max(0.00000001, initVal)) or initVal
+
     cvars.AddChangeCallback(cv:GetName(), function(_, _, newval)
-        quickmodifiers_values[k] = tonumber(newval) or 1
+        local v = tonumber(newval) or 1
+        quickmodifiers_values[k] = shouldInvert and (1 / math_max(0.00000001, v)) or v
     end, "arc9_qmods_" .. k)
 end
 
@@ -72,13 +109,14 @@ end
 --[[ Class Methods ]]--
 
 function SWEP:ClearLongCache() -- would rename this to "ClearProcessedCache" or smth i dunno
-    self.PV_Cache = {}
-    self.PV_CacheLong = {}
+    local selfTbl = ENT_GetTable(self)
+    selfTbl.PV_Cache = {}
+    selfTbl.PV_CacheLong = {}
 end
 
 
 function SWEP:InvalidateCache()
-    if singleplayer and self:GetOwner():IsPlayer() then
+    if singleplayer and getmetatable(ENT_GetOwner(self)) == PLY then
         self:CallOnClient("InvalidateCache")
     end
 
@@ -87,29 +125,31 @@ end
 
 
 function SWEP:DoInvalidateCache() -- todo: run this while supermods are being applied so the PV_CacheLong updates properly now
-    self.WantToInvalidateCache = false
+    local selfTbl = ENT_GetTable(self)
+    selfTbl.WantToInvalidateCache = false
 
-    self.StatCache = {}
-    self:ClearLongCache()
+    selfTbl.StatCache = {}
+    selfTbl.PV_Cache = {}
+    selfTbl.PV_CacheLong = {}
 
-    self.AttTableCache = {}
-    
-    self.HookCache = {}
-    self.AttPosCache = {}
-    self.AdvancedCamoCache = nil
-    self.AffectorsCache = nil
-    self.ElementsCache = nil
-    self.ElementTablesCache = nil
-    self.RecoilPatternCache = {}
-    self.CachedToggleAttsStatus = nil
-    -- self.ScrollLevels = {} -- moved to PostModify
-    self.HasNoAffectors = {}
-    self.ListOfToggleableAttSlots = nil
+    selfTbl.AttTableCache = {}
 
-    self.GetSubSlotListCache = nil
-    self.CacheLastInvalidation = CurTime()
+    selfTbl.HookCache = {}
+    selfTbl.AttPosCache = {}
+    selfTbl.AdvancedCamoCache = nil
+    selfTbl.AffectorsCache = nil
+    selfTbl.ElementsCache = nil
+    selfTbl.ElementTablesCache = nil
+    selfTbl.RecoilPatternCache = {}
+    selfTbl.CachedToggleAttsStatus = nil
+    -- selfTbl.ScrollLevels = {} -- moved to PostModify
+    selfTbl.HasNoAffectors = {}
+    selfTbl.ListOfToggleableAttSlots = nil
 
-    self:SetBaseSettings()
+    selfTbl.GetSubSlotListCache = nil
+    selfTbl.CacheLastInvalidation = CurTime()
+
+    selfTbl.SetBaseSettings(self)
 end
 
 
@@ -118,54 +158,64 @@ function SWEP:GetFinalAttTableFromAddress(address)
 end
 
 
-local function getFinalAttTable(self, slot)
-    if !slot or !slot.Installed then return {} end
+local function getFinalAttTable(self, slot, selfTbl)
+    if not slot or not slot.Installed then return {} end
+    selfTbl = selfTbl or ENT_GetTable(self)
 
-    local cache = self.AttTableCache[slot]
+    local attTableCache = selfTbl.AttTableCache
+    local cache = attTableCache[slot]
     if cache then
-        local result = table.Copy(cache) -- Create a copy so we don't mutate the cache
-        if result.ToggleStats then
-            table.Merge(result, result.ToggleStats[slot.ToggleNum or 1] or {})
+        local result = table_Copy(cache) -- Create a copy so we don't mutate the cache
+        local toggleStats = result.ToggleStats
+        if toggleStats then
+            table_Merge(result, toggleStats[slot.ToggleNum or 1] or {})
         end
         return result
     end
 
-    local atttbl = table.Copy(ARC9.GetAttTable(slot.Installed) or {})
+    local installed = slot.Installed
+    local atttbl = table_Copy(ARC9.GetAttTable(installed) or {})
 
-    if self.AttachmentTableOverrides and self.AttachmentTableOverrides[slot.Installed] then
-        atttbl = table.Merge(atttbl, self.AttachmentTableOverrides[slot.Installed])
+    local overrides = selfTbl.AttachmentTableOverrides
+    if overrides and overrides[installed] then
+        atttbl = table_Merge(atttbl, overrides[installed])
     end
 
-    self.AttTableCache[slot] = atttbl
+    attTableCache[slot] = atttbl
 
-    local result = table.Copy(atttbl) -- Create a copy of the new cache
-    if result.ToggleStats then
-        table.Merge(result, result.ToggleStats[slot.ToggleNum or 1] or {})
+    local result = table_Copy(atttbl) -- Create a copy of the new cache
+    local toggleStats = result.ToggleStats
+    if toggleStats then
+        table_Merge(result, toggleStats[slot.ToggleNum or 1] or {})
     end
 
     return result
 end
 
 function SWEP:GetFinalAttTable(slot)
-    return getFinalAttTable(self, slot)
+    return getFinalAttTable(self, slot, ENT_GetTable(self))
 end
 
 
 local getAllAffectors
 do
     local cvarArcModifiers = GetConVar("arc9_modifiers")
+    local arcModifiers = cvarArcModifiers:GetString()
+    cvars.AddChangeCallback(cvarArcModifiers:GetName(), function(_, _, newval)
+        arcModifiers = tostring(newval)
+    end, "arc9_modifiers")
 
-    getAllAffectors = function(self)
-        if self.AffectorsCache then return self.AffectorsCache end
+    getAllAffectors = function(self, selfTbl)
+        selfTbl = selfTbl or ENT_GetTable(self)
+        if selfTbl.AffectorsCache then return selfTbl.AffectorsCache end
 
-        -- local aff = {table.Copy(self:GetTable())}
-        local aff = {self:GetTable()}
+        local aff = {selfTbl}
 
         local affLength = 1
 
         if not ARC9.OverrunSights then
             ARC9.OverrunSights = true
-            local originalSightTable = self:GetSight().OriginalSightTable
+            local originalSightTable = selfTbl.GetSight(self).OriginalSightTable
 
             if originalSightTable then
                 affLength = affLength + 1
@@ -175,11 +225,11 @@ do
             ARC9.OverrunSights = false
         end
 
-        local subSlotList = self:GetSubSlotList()
+        local subSlotList = selfTbl.GetSubSlotList(self)
         local subSlotListLength = #subSlotList
 
         for i = 1, subSlotListLength do
-            local atttbl = getFinalAttTable(self, subSlotList[i])
+            local atttbl = getFinalAttTable(self, subSlotList[i], selfTbl)
 
             if atttbl then
                 affLength = affLength + 1
@@ -187,7 +237,7 @@ do
             end
         end
 
-        local config = string.Split(cvarArcModifiers:GetString(), "\\n")
+        local config = string.Split(arcModifiers, "\\n")
         local configLength = #config
         local c4 = {}
 
@@ -212,14 +262,14 @@ do
         if not ARC9.OverrunFiremodes then
             ARC9.OverrunFiremodes = true
             affLength = affLength + 1
-            aff[affLength] = self:GetCurrentFiremodeTable()
+            aff[affLength] = selfTbl.GetCurrentFiremodeTable(self)
             ARC9.OverrunFiremodes = false
         end
 
         if not ARC9.OverrunAttElements then
             ARC9.OverrunAttElements = true
 
-            local eles = self:GetAttachmentElements()
+            local eles = selfTbl.GetAttachmentElements(self)
 
             for _, eletable in ipairs(eles) do
                 if eletable then
@@ -231,20 +281,22 @@ do
             ARC9.OverrunAttElements = false
         end
 
-        self.AffectorsCache = aff
+        selfTbl.AffectorsCache = aff
 
         return aff
     end
 end
 
 function SWEP:GetAllAffectors()
-    return getAllAffectors(self)
+    return getAllAffectors(self, ENT_GetTable(self))
 end
 
 
-local function runHook(self, val, data)
+local function runHook(self, val, data, selfTbl)
+    selfTbl = selfTbl or ENT_GetTable(self)
     local any = false
-    local hookCache = self.HookCache[val]
+    local hookCacheTbl = selfTbl.HookCache
+    local hookCache = hookCacheTbl[val]
 
     if hookCache then
         for i = 1, #hookCache do
@@ -257,7 +309,7 @@ local function runHook(self, val, data)
             any = true
         end
 
-        local data2 = hook.Run("ARC9_" .. val, self, data)
+        local data2 = hook_Run("ARC9_" .. val, self, data)
         if data2 ~= nil then
             data = data2
         end
@@ -267,7 +319,7 @@ local function runHook(self, val, data)
 
     local cacheLen = 0
     local newCache = {}
-    local allAffectors = getAllAffectors(self)
+    local allAffectors = getAllAffectors(self, selfTbl)
     local affectorsCount = #allAffectors
 
     for i = 1, affectorsCount do
@@ -286,8 +338,8 @@ local function runHook(self, val, data)
         end
     end
 
-    self.HookCache[val] = newCache
-    local data2 = hook.Run("ARC9_" .. val, self, data)
+    hookCacheTbl[val] = newCache
+    local data2 = hook_Run("ARC9_" .. val, self, data)
     if data2 ~= nil then
         data = data2
     end
@@ -300,38 +352,35 @@ function SWEP:RunHook(val, data)
 end
 
 
-local function getValue(self, val, base, condition, amount, donotcache) -- preventing .__index overhead i guess
+local function getValue(self, selfTbl, val, base, condition, amount, donotcache)
+    selfTbl = selfTbl or ENT_GetTable(self)
     condition = condition or ""
     amount = amount or 1
 
-    local stat
-    if base ~= nil then
-        stat = base
-    else
-        -- stat = self:GetTable()[val]
-        stat = self[val]
+    local stat = base
+    if stat == nil then
+        stat = selfTbl[val]
     end
 
     local valContCondition = val .. condition
-    if self.HasNoAffectors[valContCondition] then 
-        if condition == "" and quickmodifiers[val] and type(stat) == 'number' then
-            local convarvalue = quickmodifiers[val]:GetFloat()
-            if val == "MalfunctionMeanShotsToFail" then
-                stat = stat / math.max(0.00000001, convarvalue)
-            else
-                stat = stat * convarvalue
-            end
+    local qmod = condition == "" and quickmodifiers_values[val]
+    local hasNoAffectors = selfTbl.HasNoAffectors
+
+    if hasNoAffectors[valContCondition] then
+        if qmod and type(stat) == "number" then
+            stat = stat * qmod
         end
-        return stat 
+
+        return stat
     end
 
-    local unaffected = true
-    
-    local baseContValContCondition = base and tostring(base) .. valContCondition or valContCondition
+    local canCache = not donotcache and not selfTbl.DynamicConditions[condition]
+    local statCache = selfTbl.StatCache
+    local baseContValContCondition = base and (tostring(base) .. valContCondition) or valContCondition
 
-    if not self.DynamicConditions[condition] and not donotcache then
-        local cache = self.StatCache[baseContValContCondition]
-    
+    if canCache then
+        local cache = statCache[baseContValContCondition]
+
         if cache ~= nil then
             local hookstat = runHook(self, val .. "Hook" .. condition, cache) -- whats the point of this though
             -- its not being cached so you want it to be dynamic
@@ -340,39 +389,40 @@ local function getValue(self, val, base, condition, amount, donotcache) -- preve
             -- im leaving this as it is temporarily
             if hookstat ~= nil then cache = hookstat end
 
-            if condition == "" and quickmodifiers[val] and type(cache) == "number" then
-                local convarvalue = quickmodifiers_values[val]
-
-                if val == "MalfunctionMeanShotsToFail" then -- dont kill me for this pls
-                    cache = cache / math.max(0.00000001, convarvalue)
-                else
-                    cache = cache * convarvalue
-                end
+            if qmod and type(cache) == "number" then
+                cache = cache * qmod
             end
-            
+
             return cache
         end
     end
 
     if type(stat) == "table" then stat.BaseClass = nil end
 
+    local unaffected = true
     local priority = 0
-    local allAffectors = getAllAffectors(self)
+    local allAffectors = getAllAffectors(self, selfTbl)
     local affectorsCount = #allAffectors
 
-    if not self.ExcludeFromRawStats[val] then -- whatever tf this is
+    if not selfTbl.ExcludeFromRawStats[val] then
+        local prioKey = valContCondition .. "_Priority"
         for i = 1, affectorsCount do
             local elem = allAffectors[i]
             if elem == nil then continue end
-            local att_priority = elem[valContCondition .. "_Priority"] or 1
-            
+
             local mod = elem[valContCondition]
             if mod == nil then continue end
 
+            local att_priority = elem[prioKey] or 1
             if att_priority >= priority then
                 -- if this is the base weapon and we passed a modified base, scale relative to base stat
-                if i == 1 and base ~= nil and condition ~= "" and type(stat) == "number" and type(elem[val]) == "number" and elem[val] ~= 0 and type(mod) == "number" then
-                    stat = base * (mod / elem[val])
+                if i == 1 and base ~= nil and condition ~= "" and type(stat) == "number" and type(mod) == "number" then
+                    local baseVal = elem[val]
+                    if type(baseVal) == "number" and baseVal ~= 0 then
+                        stat = base * (mod / baseVal)
+                    else
+                        stat = mod
+                    end
                 else
                     stat = mod
                 end
@@ -382,13 +432,14 @@ local function getValue(self, val, base, condition, amount, donotcache) -- preve
         end
     end
 
-    for i = 1, affectorsCount do -- overriding
+    local overrideKey = val .. "Override" .. condition
+    local overridePrioKey = overrideKey .. "_Priority"
+    for i = 1, affectorsCount do
         local elem = allAffectors[i]
-        local keyName = val .. "Override" .. condition
-        local mod = elem[keyName]
-        local att_priority = elem[keyName .. "_Priority"] or 1
-        
+        local mod = elem[overrideKey]
+
         if mod ~= nil then
+            local att_priority = elem[overridePrioKey] or 1
             if att_priority >= priority then
                 stat = mod
                 priority = att_priority
@@ -397,278 +448,300 @@ local function getValue(self, val, base, condition, amount, donotcache) -- preve
         end
     end
 
-    if type(stat) == "number" then
-        for i = 1, affectorsCount do -- addition
-            local elem = allAffectors[i]
-            local mod = elem[val .. "Add" .. condition]
-            if type(mod) == type(stat) then
+    local statType = type(stat)
+    if statType == "number" then
+        local addKey = val .. "Add" .. condition
+        for i = 1, affectorsCount do
+            local mod = allAffectors[i][addKey]
+            if type(mod) == "number" then
                 stat = stat + mod * amount
-            
                 unaffected = false
             end
         end
 
-        for i = 1, affectorsCount do -- multiplication
-            local elem = allAffectors[i]
-            local mod = elem[val .. "Mult" .. condition]
-            if type(mod) == type(stat) then
+        local multKey = val .. "Mult" .. condition
+        for i = 1, affectorsCount do
+            local mod = allAffectors[i][multKey]
+            if type(mod) == "number" then
                 stat = stat * (amount == 1 and mod or (1 + (mod - 1) * amount))
-
                 unaffected = false
             end
         end
+    elseif statType == "table" then
+        stat.BaseClass = nil -- ???
     end
-
-    if type(stat) == 'table' then stat.BaseClass = nil end -- ???
 
     local preHookStat = stat
     local hookstat, any = runHook(self, val .. "Hook" .. condition, stat)
     if hookstat ~= nil then stat = hookstat end
     if any then unaffected = false end
-    local ughhh = not self.DynamicConditions[condition] and not donotcache
 
-    if ughhh then
-        self.HasNoAffectors[valContCondition] = unaffected
-        -- self.StatCache[baseContValContCondition] = preHookStat
-        self.StatCache[baseContValContCondition] = stat
+    if canCache then
+        hasNoAffectors[valContCondition] = unaffected
+        statCache[baseContValContCondition] = preHookStat
     end
 
-    if condition == "" and quickmodifiers[val] and type(stat) == 'number' then
-        local convarvalue = quickmodifiers[val]:GetFloat()
-
-        if val == "MalfunctionMeanShotsToFail" then  -- dont kill me for this pls
-            stat = stat / math.max(0.00000001, convarvalue)
-        else
-            stat = stat * convarvalue
-        end
-    end
-
-    if ughhh then
-        self.StatCache[baseContValContCondition] = preHookStat
+    if qmod and type(stat) == "number" then
+        stat = stat * qmod
     end
 
     return stat
 end
 
 function SWEP:GetValue(val, base, condition, amount, donotcache)
-    return getValue(self, val, base, condition, amount, donotcache)
+    return getValue(self, nil, val, base, condition, amount, donotcache)
 end
 
 function SWEP:GetProcessedValue(val, isstatic, base)
-    local swepDt = self.dt
+    local selfTbl = ENT_GetTable(self)
+    local swepDt = selfTbl.dt
 
-    if swepDt.Jammed and val == "Malfunction" then return true
-    elseif swepDt.HeatLockout and val == "Overheat" then return true
+    if val == "Malfunction" then
+        if swepDt.Jammed then return true end
+    elseif val == "Overheat" then
+        if swepDt.HeatLockout then return true end
     end
-    
-    local processedValueName = base and val .. tostring(base) or val
+
+    local processedValueName = base ~= nil and (val .. tostring(base)) or val
+    local isStaticCacheable = isstatic and not selfTbl.DynamicConditions[val]
+    local pvCache = selfTbl.PV_Cache
     local ticks
 
-    if isstatic and not self.DynamicConditions[val] then
-        local cache = self.PV_CacheLong[processedValueName]
+    if isStaticCacheable then
+        local cache = selfTbl.PV_CacheLong[processedValueName]
         if cache ~= nil then return cache end
-
     else
-        ticks = engine.TickCount()
-        
-        if self.PV_Tick >= ticks then
-            local tempcache = self.PV_Cache[processedValueName]
-            if tempcache ~= nil then return tempcache end
+        ticks = engine_TickCount()
 
-        elseif next(self.PV_Cache) ~= nil then
-            self.PV_Cache = {}
+        if selfTbl.PV_Tick >= ticks then
+            local tempcache = pvCache[processedValueName]
+            if tempcache ~= nil then return tempcache end
+        else
+            if next(pvCache) ~= nil then
+                selfTbl.PV_Cache = {}
+                pvCache = selfTbl.PV_Cache
+            end
+            selfTbl.PV_Move = nil
+            selfTbl.PV_Tick = ticks
         end
     end
 
-    local stat = getValue(self, val, base)
-    -- if true then return stat end
+    local stat = getValue(self, selfTbl, val, base)
 
-    local curTime = CurTime()
-    local owner = self:GetOwner()
-    local isOwnerValid = owner:IsValid()
-    local isOwnerNPC = owner:IsNPC()
+    local owner = ENT_GetOwner(self)
+    local isOwnerValid = owner and ENT_IsValid(owner)
+    local isOwnerPlayer = isOwnerValid and getmetatable(owner) == PLY
+    local isOwnerNPC = isOwnerValid and not isOwnerPlayer and owner:IsNPC()
 
     if isOwnerNPC then
-        stat = getValue(self, val, stat, "NPC", nil, isstatic) -- isstatic to avoid caching unnecessary data, since the processed value will be cached itself
+        stat = getValue(self, selfTbl, val, stat, "NPC", nil, isstatic) -- isstatic to avoid caching unnecessary data, since the processed value will be cached itself
     end
 
-    if cvarArc9Truenames:GetBool() then
-        stat = getValue(self, val, stat, "True", nil, isstatic)
+    if arc9Truenames then
+        stat = getValue(self, selfTbl, val, stat, "True", nil, isstatic)
     end
 
-    if not swepDt.UBGL then
-        if getValue(self, "Silencer") then stat = getValue(self, val, stat, "Silenced", nil, isstatic) end
+    local hasNoAffectors = selfTbl.HasNoAffectors
+    local isUBGL = swepDt.UBGL
+
+    if not isUBGL then
+        if not hasNoAffectors[val .. "Silenced"] and getValue(self, selfTbl, "Silencer") then
+            stat = getValue(self, selfTbl, val, stat, "Silenced", nil, isstatic)
+        end
     else
-        stat = getValue(self, val, stat, "UBGL", nil, isstatic)
+        stat = getValue(self, selfTbl, val, stat, "UBGL", nil, isstatic)
     end
 
     if not isstatic and not isOwnerNPC then -- nobody is gonna fucking notice that npcs process these stats either way
-        if swepDt.BurstCount == 0 then
-            stat = getValue(self, val, stat, "FirstShot")
+        local curTime = CurTime()
+
+        if not hasNoAffectors[val .. "FirstShot"] and swepDt.BurstCount == 0 then
+            stat = getValue(self, selfTbl, val, stat, "FirstShot")
         end
 
-        if swepDt.NthShot % 2 == 0 then
-            stat = getValue(self, val, stat, "EvenShot")
-        else
-            stat = getValue(self, val, stat, "OddShot")
+        local evenShotKey = val .. "EvenShot"
+        local oddShotKey = val .. "OddShot"
+        if not hasNoAffectors[evenShotKey] or not hasNoAffectors[oddShotKey] then
+            if swepDt.NthShot % 2 == 0 then
+                if not hasNoAffectors[evenShotKey] then
+                    stat = getValue(self, selfTbl, val, stat, "EvenShot")
+                end
+            elseif not hasNoAffectors[oddShotKey] then
+                stat = getValue(self, selfTbl, val, stat, "OddShot")
+            end
         end
 
-        if self:Clip1() == 0 then
-            stat = getValue(self, val, stat, "Empty")
+        if not hasNoAffectors[val .. "Empty"] and WPN_Clip1(self) == 0 then
+            stat = getValue(self, selfTbl, val, stat, "Empty")
         end
 
-        if swepDt.UBGL and self:Clip2() == 0 then
-            stat = getValue(self, val, stat, "EmptyUBGL")
+        if isUBGL and not hasNoAffectors[val .. "EmptyUBGL"] and WPN_Clip2(self) == 0 then
+            stat = getValue(self, selfTbl, val, stat, "EmptyUBGL")
         end
 
-        if swepDt.Reloading then
-            stat = getValue(self, val, stat, "Reload")
+        if not hasNoAffectors[val .. "Reload"] and swepDt.Reloading then
+            stat = getValue(self, selfTbl, val, stat, "Reload")
         end
 
-        if swepDt.NthReload % 2 == 0 then
-            stat = getValue(self, val, stat, "EvenReload")
-        else
-            stat = getValue(self, val, stat, "OddReload")
+        local evenReloadKey = val .. "EvenReload"
+        local oddReloadKey = val .. "OddReload"
+        if not hasNoAffectors[evenReloadKey] or not hasNoAffectors[oddReloadKey] then
+            if swepDt.NthReload % 2 == 0 then
+                if not hasNoAffectors[evenReloadKey] then
+                    stat = getValue(self, selfTbl, val, stat, "EvenReload")
+                end
+            elseif not hasNoAffectors[oddReloadKey] then
+                stat = getValue(self, selfTbl, val, stat, "OddReload")
+            end
         end
 
-        if swepDt.Bipod then
-            stat = getValue(self, val, stat, "Bipod")
+        if not hasNoAffectors[val .. "Bipod"] and swepDt.Bipod then
+            stat = getValue(self, selfTbl, val, stat, "Bipod")
         end
 
-        local hasNoAffectors = self.HasNoAffectors
-        local sightedbruh = hasNoAffectors[val .. "Sighted"] -- what the fuck is Sighted when correct condition is Sights
+        local sightedKey = val .. "Sighted"
+        local sightsKey = val .. "Sights"
+        local hipfireKey = val .. "HipFire"
 
-        if not hasNoAffectors[val .. "Sights"] or not hasNoAffectors[val .. "HipFire"] or !sightedbruh then
+        if hasNoAffectors[sightedKey] == nil then getValue(self, selfTbl, val, stat, "Sighted") end
+        if hasNoAffectors[sightsKey] == nil then getValue(self, selfTbl, val, stat, "Sights") end
+        if hasNoAffectors[hipfireKey] == nil then getValue(self, selfTbl, val, stat, "HipFire") end
+
+        local noSighted = hasNoAffectors[sightedKey]
+        if not hasNoAffectors[sightsKey] or not hasNoAffectors[hipfireKey] or not noSighted then
             local sightAmount = swepDt.SightAmount
 
-            if type(stat) == 'number' then
-                if sightAmount >= 1 and sightedbruh then
-                    stat = getValue(self, val, stat, "Sighted")
+            if type(stat) == "number" then
+                if sightAmount >= 1 and not noSighted then
+                    stat = getValue(self, selfTbl, val, stat, "Sighted")
                 else
-                    local hipfire = getValue(self, val, stat, "HipFire")
-                    local sights = getValue(self, val, stat, "Sights")
+                    local hipfire = getValue(self, selfTbl, val, stat, "HipFire")
+                    local sights = getValue(self, selfTbl, val, stat, "Sights")
 
-                    if isnumber(hipfire) and isnumber(sights) then
+                    if type(hipfire) == "number" and type(sights) == "number" then
                         stat = Lerp(sightAmount, hipfire, sights)
                     end
                 end
             else
                 if sightAmount >= 1 then
-                    if !sightedbruh then
-                        stat = getValue(self, val, stat, "Sighted")
+                    if not noSighted then
+                        stat = getValue(self, selfTbl, val, stat, "Sighted")
                     else
-                        stat = getValue(self, val, stat, "Sights")
+                        stat = getValue(self, selfTbl, val, stat, "Sights")
                     end
                 else
-                    stat = getValue(self, val, stat, "HipFire")
+                    stat = getValue(self, selfTbl, val, stat, "HipFire")
                 end
             end
         end
 
         if not ARC9HeatCapacityGPVOverflow and (not hasNoAffectors[val .. "Hot"] or not hasNoAffectors[val .. "Heated"]) then
             local heatAmount = swepDt.HeatAmount
-            local hasHeat = heatAmount > 0
 
-            if hasHeat and base ~= "HeatCapacity" then
+            if heatAmount > 0 and base ~= "HeatCapacity" then
                 ARC9HeatCapacityGPVOverflow = true
-                local cap = self:GetProcessedValue("HeatCapacity")
+                local cap = selfTbl.GetProcessedValue(self, "HeatCapacity")
                 ARC9HeatCapacityGPVOverflow = false
 
-                if type(stat) == 'number' then
-                    local hot = getValue(self, val, stat, "Hot")
+                local hot = getValue(self, selfTbl, val, stat, "Hot")
 
+                if type(stat) == "number" then
                     if heatAmount >= cap then
-                        local heated = getValue(self, val, stat, "Heated")
+                        local heated = getValue(self, selfTbl, val, stat, "Heated")
                         stat = (heated == stat and hot ~= stat) and hot or heated
-                    elseif hasHeat then
+                    else
                         stat = Lerp(heatAmount / cap, stat, hot)
                     end
-
                 else
                     if heatAmount >= cap then
-                        local heated = getValue(self, val, stat, "Heated")
+                        local heated = getValue(self, selfTbl, val, stat, "Heated")
                         stat = (heated == stat and hot ~= stat) and hot or heated
-                    elseif hasHeat then
-                        stat = getValue(self, val, stat, "Hot")
+                    else
+                        stat = hot
                     end
                 end
             end
         end
 
-        local lastMeleeTime = swepDt.LastMeleeTime
-        if not hasNoAffectors[val .. "Melee"] and lastMeleeTime < curTime then
-            local pft = curTime - lastMeleeTime
-            local d = pft / (getValue(self, "PreBashTime") + getValue(self, "PostBashTime"))
-            d = 1 - math.Clamp(d, 0, 1)
+        if not hasNoAffectors[val .. "Melee"] then
+            local lastMeleeTime = swepDt.LastMeleeTime
+            if lastMeleeTime < curTime then
+                local pft = curTime - lastMeleeTime
+                local d = 1 - math_Clamp(pft / (getValue(self, selfTbl, "PreBashTime") + getValue(self, selfTbl, "PostBashTime")), 0, 1)
 
-            if type(stat) == 'number' then
-                stat = Lerp(d, stat, getValue(self, val, stat, "Melee"))
-            elseif d > 0 then
-                stat = getValue(self, val, stat, "Melee")
+                if type(stat) == "number" then
+                    stat = Lerp(d, stat, getValue(self, selfTbl, val, stat, "Melee"))
+                elseif d > 0 then
+                    stat = getValue(self, selfTbl, val, stat, "Melee")
+                end
             end
         end
 
         if not hasNoAffectors[val .. "Shooting"] then
-            local nextPrimaryFire = self:GetNextPrimaryFire()
+            local nextPrimaryFire = WPN_GetNextPrimaryFire(self) + 0.1
 
-            if nextPrimaryFire + 0.1 > curTime then
-                local pft = (nextPrimaryFire + 0.1) - curTime
-                local d = math.Clamp(pft / 0.1, 0, 1)
+            if nextPrimaryFire > curTime then
+                local d = math_Clamp((nextPrimaryFire - curTime) * 10, 0, 1)
 
-                if type(stat) == 'number' then
-                    stat = Lerp(d, stat, getValue(self, val, stat, "Shooting"))
+                if type(stat) == "number" then
+                    stat = Lerp(d, stat, getValue(self, selfTbl, val, stat, "Shooting"))
                 elseif d > 0 then
-                    stat = getValue(self, val, stat, "Shooting")
+                    stat = getValue(self, selfTbl, val, stat, "Shooting")
                 end
             end
         end
 
         if val ~= "RecoilModifierCap" and not hasNoAffectors[val .. "Recoil"] then
-            local recoilAmount = math.min(self:GetProcessedValue("RecoilModifierCap"), swepDt.RecoilAmount)
-            if recoilAmount > 0 then stat = getValue(self, val, stat, "Recoil", recoilAmount) end
-        end
-
-        if --[[not isOwnerNPC and]] isOwnerValid then
-            if owner:OnGround() and owner:GetMoveType() ~= MOVETYPE_NOCLIP then
-                if owner:IsSprinting() and !self:StillWaiting() then
-                    stat = getValue(self, val, stat, "Sprint")
-                elseif owner:Crouching() then
-                    stat = getValue(self, val, stat, "Crouch")
-                end
-                
-            else
-                stat = getValue(self, val, stat, "MidAir")
-            end
-        end
-
-        if not hasNoAffectors[val .. "Move"] and isOwnerValid then
-            local spd = self.PV_Move
-            local maxspd = owner:IsPlayer() and owner:GetWalkSpeed() or 250
-
-            --if singleplayer or CLIENT or self.PV_Tick ~= UnPredictedCurTime() then
-                spd = math.min(owner:GetAbsVelocity():Length2D(), maxspd) / maxspd
-                self.PV_Move = spd
-            --end
-
-            if type(stat) == 'number' then
-                stat = Lerp(spd, stat, getValue(self, val, stat, "Move"))
-            else
-                if spd > 0 then
-                    stat = getValue(self, val, stat, "Move")
+            local recoilAmount = swepDt.RecoilAmount
+            if recoilAmount > 0 then
+                recoilAmount = math_min(selfTbl.GetProcessedValue(self, "RecoilModifierCap"), recoilAmount)
+                if recoilAmount > 0 then
+                    stat = getValue(self, selfTbl, val, stat, "Recoil", recoilAmount)
                 end
             end
         end
 
-        if swepDt.GrenadeTossing then
-            stat = getValue(self, val, stat, "Toss")
+        if isOwnerValid then
+            if not hasNoAffectors[val .. "Sprint"] or not hasNoAffectors[val .. "Crouch"] or not hasNoAffectors[val .. "MidAir"] then
+                if ENT_OnGround(owner) and ENT_GetMoveType(owner) ~= MOVETYPE_NOCLIP then
+                    if not hasNoAffectors[val .. "Sprint"] and PLY_IsSprinting(owner) and not selfTbl.StillWaiting(self) then
+                        stat = getValue(self, selfTbl, val, stat, "Sprint")
+                    elseif not hasNoAffectors[val .. "Crouch"] and PLY_Crouching(owner) then
+                        stat = getValue(self, selfTbl, val, stat, "Crouch")
+                    end
+                elseif not hasNoAffectors[val .. "MidAir"] then
+                    stat = getValue(self, selfTbl, val, stat, "MidAir")
+                end
+            end
+
+            if not hasNoAffectors[val .. "Move"] then
+                local spd = selfTbl.PV_Move
+                if not spd then
+                    local maxspd = getmetatable(owner) == PLY and PLY_GetWalkSpeed(owner) or 250
+                    spd = math_min(VEC_Length2D(ENT_GetAbsVelocity(owner)), maxspd) / maxspd
+                    selfTbl.PV_Move = spd
+                end
+
+                if type(stat) == "number" then
+                    stat = Lerp(spd, stat, getValue(self, selfTbl, val, stat, "Move"))
+                elseif spd > 0 then
+                    stat = getValue(self, selfTbl, val, stat, "Move")
+                end
+            end
+        end
+
+        if not hasNoAffectors[val .. "Toss"] and swepDt.GrenadeTossing then
+            stat = getValue(self, selfTbl, val, stat, "Toss")
         end
     end
 
-    if isstatic and not self.DynamicConditions[val] then
-        self.PV_CacheLong[processedValueName] = stat
+    if isStaticCacheable then
+        selfTbl.PV_CacheLong[processedValueName] = stat
     else
-        self.PV_Cache[processedValueName] = stat
-        if self.PV_Tick < ticks then self.PV_Tick = ticks + (isOwnerNPC and 16 or 0) end
+        pvCache[processedValueName] = stat
+        if selfTbl.PV_Tick < ticks then
+            selfTbl.PV_Tick = ticks + (isOwnerNPC and 16 or 0)
+        end
     end
 
     return stat

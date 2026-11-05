@@ -1,152 +1,191 @@
-local v0 = Vector(0, 0, 0)
+local CLIENT, type, pairs, vector_origin =
+      CLIENT, type, pairs, vector_origin
+
+local math_max =
+      math.max
+
+local ENT = FindMetaTable("Entity")
+local ENT_GetTable, ENT_GetOwner, ENT_IsValid, ENT_LookupBone, ENT_ManipulateBoneScale =
+      ENT.GetTable, ENT.GetOwner, ENT.IsValid, ENT.LookupBone, ENT.ManipulateBoneScale
+local ENT_SetSkin, ENT_SetBodyGroups, ENT_SetBodygroup, ENT_GetBoneCount, ENT_GetNumPoseParameters =
+      ENT.SetSkin, ENT.SetBodyGroups, ENT.SetBodygroup, ENT.GetBoneCount, ENT.GetNumPoseParameters
+local ENT_SetPoseParameter, ENT_GetPoseParameterName =
+      ENT.SetPoseParameter, ENT.GetPoseParameterName
+
 local v1 = Vector(1, 1, 1)
 
 local swepGetProcessedValue = SWEP.GetProcessedValue
 
+local function hideBone(mdl, bone)
+    local boneType = type(bone)
+    if boneType == "table" then
+        for i = 1, #bone do
+            local bone2 = bone[i]
+            local boneid = type(bone2) == "number" and bone2 or ENT_LookupBone(mdl, bone2)
+            if boneid then
+                ENT_ManipulateBoneScale(mdl, boneid, vector_origin)
+            end
+        end
+    else
+        local boneid = boneType == "number" and bone or ENT_LookupBone(mdl, bone)
+        if boneid then
+            ENT_ManipulateBoneScale(mdl, boneid, vector_origin)
+        end
+    end
+end
+
 function SWEP:DoBodygroups(wm, cm)
     wm = wm or cm
-    local owner = self:GetOwner()
-    local validowner = IsValid(owner)
-    local isnpc = (validowner and owner:IsNPC()) or self:ShouldLOD() > 0
 
-    if !wm and !validowner then return end
+    local selfTbl = ENT_GetTable(self)
+    local owner = ENT_GetOwner(self)
+    local validowner = owner and ENT_IsValid(owner)
 
-    local mdl = wm and self:GetWM() or self:GetVM()
-    if cm then mdl = self.CModel[1] end
+    if not wm and not validowner then return end
 
-    if !IsValid(mdl) then return end
+    local isnpc = (validowner and owner:IsNPC()) or selfTbl.ShouldLOD(self) > 0
 
-    mdl:SetSkin(self.DefaultSkin)
-    mdl:SetBodyGroups(self.DefaultBodygroups or "")
-
-    for _, ele in ipairs(self:GetAttachmentElements()) do
-        for _, j in pairs(ele.Bodygroups or {}) do
-            if !istable(j) then continue end
-
-            local id = j[1]
-            if !isnumber(id) then continue end
-
-            mdl:SetBodygroup(id, j[2] or 0)
-        end
-
-        if ele.Skin then mdl:SetSkin(ele.Skin)  end
+    local mdl
+    if cm then
+        mdl = selfTbl.CModel[1]
+    elseif wm then
+        mdl = selfTbl.GetWM(self)
+    else
+        mdl = selfTbl.GetVM(self)
     end
 
-    if !isnpc then
-        for i = 0, mdl:GetBoneCount() do
-            mdl:ManipulateBoneScale(i, v1)
-        end
-        
-        local swepDt = self.dt
-        local amt = swepDt.Reloading and swepDt.LoadedRounds or self:Clip1()
-        local bbg = self.BulletBodygroups
+    if not mdl or not ENT_IsValid(mdl) then return end
 
-        if bbg then
-            for c, bgs in ipairs(bbg) do
-                if amt < c and istable(bgs) then
-                    mdl:SetBodygroup(bgs[1], bgs[2])
-                    break
+    ENT_SetSkin(mdl, selfTbl.DefaultSkin)
+    ENT_SetBodyGroups(mdl, selfTbl.DefaultBodygroups or "")
+
+    local attElements = selfTbl.GetAttachmentElements(self)
+    for i = 1, #attElements do
+        local ele = attElements[i]
+        local bgs = ele.Bodygroups
+        if bgs then
+            for _, j in pairs(bgs) do
+                if type(j) == "table" then
+                    local id = j[1]
+                    if type(id) == "number" then
+                        ENT_SetBodygroup(mdl, id, j[2] or 0)
+                    end
                 end
             end
         end
 
-        local stbg = self.SoundTableBodygroups
+        if ele.Skin then
+            ENT_SetSkin(mdl, ele.Skin)
+        end
+    end
+
+    if not isnpc then
+        for i = 0, ENT_GetBoneCount(mdl) do
+            ENT_ManipulateBoneScale(mdl, i, v1)
+        end
+
+        local swepDt = selfTbl.dt
+        local amt = swepDt.Reloading and swepDt.LoadedRounds or self:Clip1()
+        local bbg = selfTbl.BulletBodygroups
+
+        if bbg then
+            for c = 1, #bbg do
+                if amt < c then
+                    local bgs = bbg[c]
+                    if type(bgs) == "table" then
+                        ENT_SetBodygroup(mdl, bgs[1], bgs[2])
+                        break
+                    end
+                end
+            end
+        end
+
+        local stbg = selfTbl.SoundTableBodygroups
         if stbg then
             for i, k in pairs(stbg) do
-                mdl:SetBodygroup(i, k)
+                ENT_SetBodygroup(mdl, i, k)
             end
         end
 
         if CLIENT then
-            local poseParams = self.SoundTablePoseParams
-            for i = 0, mdl:GetNumPoseParameters() - 1 do
-                mdl:SetPoseParameter(i, 0)
-                local name = mdl:GetPoseParameterName(i)
-
-                if poseParams and poseParams[name] then
-                    mdl:SetPoseParameter(i, poseParams[name])
+            local poseParams = selfTbl.SoundTablePoseParams
+            local numPoseParams = ENT_GetNumPoseParameters(mdl) - 1
+            if poseParams then
+                for i = 0, numPoseParams do
+                    local name = ENT_GetPoseParameterName(mdl, i)
+                    ENT_SetPoseParameter(mdl, i, poseParams[name] or 0)
+                end
+            else
+                for i = 0, numPoseParams do
+                    ENT_SetPoseParameter(mdl, i, 0)
                 end
             end
         end
-
-        local hidebones = self:GetHiddenBones(wm)
-
-        for bone, enabled in pairs(hidebones or {}) do
-            if !enabled then continue end
-
-            local boneid = isnumber(bone) and bone or mdl:LookupBone(bone)
-            if boneid then mdl:ManipulateBoneScale(boneid, v0) end
-        end
-
 
         local bulletbones = swepGetProcessedValue(self, "BulletBones", true)
-
         if bulletbones then
-            local loaded = swepGetProcessedValue(self, "BottomlessClip", true) and self:Ammo1() or swepDt.LoadedRounds - (self.BulletBonesSub1 and 1 or 0)
+            local loaded = swepGetProcessedValue(self, "BottomlessClip", true) and self:Ammo1() or (swepDt.LoadedRounds - (selfTbl.BulletBonesSub1 and 1 or 0))
 
-            for i, bone in ipairs(bulletbones) do
-                local bones = istable(bone) and bone or {bone}
-                if i > loaded then
-                    for _, bone2 in ipairs(bones) do
-                        local boneid = isnumber(bone2) and bone2 or mdl:LookupBone(bone2)
-                        if boneid then
-                            mdl:ManipulateBoneScale(boneid, v0)
-                        end
-                    end
-                end
+            for i = math_max(1, loaded + 1), #bulletbones do
+                hideBone(mdl, bulletbones[i])
             end
         end
-
 
         local stripperbones = swepGetProcessedValue(self, "StripperClipBones", true)
-
         if stripperbones then
-            local loadingIntoClip = self:GetLoadingIntoClip()
-            for i, bone in ipairs(stripperbones) do
-                local bones = istable(bone) and bone or {bone}
-                if i > loadingIntoClip then
-                    for _, bone2 in ipairs(bones) do
-                        local boneid = isnumber(bone2) and bone2 or mdl:LookupBone(bone2)
-                        if boneid then
-                            mdl:ManipulateBoneScale(boneid, v0)
-                        end
-                    end
-                end
+            local loadingIntoClip = selfTbl.GetLoadingIntoClip(self)
+
+            for i = math_max(1, loadingIntoClip + 1), #stripperbones do
+                hideBone(mdl, stripperbones[i])
             end
-        end
-    else
-        local hidebones = self:GetHiddenBones(wm)
-
-        for bone, enabled in pairs(hidebones or {}) do
-            if !enabled then continue end
-
-            local boneid = isnumber(bone) and bone or mdl:LookupBone(bone)
-            if boneid then mdl:ManipulateBoneScale(boneid, v0) end
         end
     end
 
-    mdl.CustomCamoTexture = swepGetProcessedValue(self, "CustomCamoTexture", true)
-    mdl.CustomCamoScale = swepGetProcessedValue(self, "CustomCamoScale", true)
-    mdl.CustomBlendFactor = swepGetProcessedValue(self, "CustomBlendFactor", true)
+    local hidebones = selfTbl.GetHiddenBones(self, wm)
+    if hidebones then
+        for bone, enabled in pairs(hidebones) do
+            if enabled then
+                local boneid = type(bone) == "number" and bone or ENT_LookupBone(mdl, bone)
+                if boneid then
+                    ENT_ManipulateBoneScale(mdl, boneid, vector_origin)
+                end
+            end
+        end
+    end
 
-    self:RunHook("Hook_ModifyBodygroups", {model = mdl, elements = self:GetElements()})
+    local mdlTbl = ENT_GetTable(mdl)
+    if mdlTbl then
+        mdlTbl.CustomCamoTexture = swepGetProcessedValue(self, "CustomCamoTexture", true)
+        mdlTbl.CustomCamoScale = swepGetProcessedValue(self, "CustomCamoScale", true)
+        mdlTbl.CustomBlendFactor = swepGetProcessedValue(self, "CustomBlendFactor", true)
+    end
+
+    selfTbl.RunHook(self, "Hook_ModifyBodygroups", {model = mdl, elements = selfTbl.GetElements(self)})
 
     if CLIENT and not isnpc then
-        for pp, ppv in pairs(self:GetReloadPoseParameterTable(wm)) do
-            if !pp or !isnumber(ppv) then continue end
-            mdl:SetPoseParameter(pp, ppv)
+        local reloadPPs = selfTbl.GetReloadPoseParameterTable(self, wm)
+        if reloadPPs then
+            for pp, ppv in pairs(reloadPPs) do
+                if pp and type(ppv) == "number" then
+                    ENT_SetPoseParameter(mdl, pp, ppv)
+                end
+            end
         end
     end
 end
 
 function SWEP:GetReloadPoseParameterTable(wm)
-    local pptables = swepGetProcessedValue(self, "ReloadPoseParameterTables", true)
-    local index = self:GetPoseParameterIndex()
+    local selfTbl = ENT_GetTable(self)
+    local index = selfTbl.GetPoseParameterIndex(self)
     local pps = {}
 
     if index ~= 0 then
-        for pp, ppv in pairs(pptables and pptables[index] or {}) do
-            pps[pp] = ppv
+        local pptables = swepGetProcessedValue(self, "ReloadPoseParameterTables", true)
+        local pptable = pptables and pptables[index]
+        if pptable then
+            for pp, ppv in pairs(pptable) do
+                pps[pp] = ppv
+            end
         end
     end
 
@@ -154,36 +193,41 @@ function SWEP:GetReloadPoseParameterTable(wm)
 end
 
 function SWEP:GetHiddenBones(wm)
-    local hidefp = swepGetProcessedValue(self, "ReloadHideBonesFirstPerson", true)
-    local hide = self.CustomizeDelta > 0 or wm or hidefp
-    local hidebones = swepGetProcessedValue(self, "HideBones", true)
-    local reloadhidebones = swepGetProcessedValue(self, "ReloadHideBoneTables", true)
+    local selfTbl = ENT_GetTable(self)
     local bones = {}
 
-    if self:GetReloading() then
-        if !self:GetProcessedValue("ShotgunReload", true) then
-            if (self:GetReloadFinishTime() - CurTime()) > 0.1 then
+    local hidefp = swepGetProcessedValue(self, "ReloadHideBonesFirstPerson", true)
+    local index = selfTbl.GetHideBoneIndex(self)
+
+    if index ~= 0 then
+        local reloadhidebones = swepGetProcessedValue(self, "ReloadHideBoneTables", true)
+        if reloadhidebones and ((hidefp and not wm) or (wm and selfTbl.ShouldTPIK(self))) then
+            local boneList = reloadhidebones[index]
+            if boneList then
+                for i = 1, #boneList do
+                    bones[boneList[i]] = true
+                end
+            end
+            return selfTbl.RunHook(self, "Hook_HideBones", bones) or bones
+        end
+    end
+
+    local hidebones = swepGetProcessedValue(self, "HideBones", true)
+    if hidebones then
+        local hide = selfTbl.CustomizeDelta > 0 or wm or hidefp
+
+        if hide and selfTbl.dt.Reloading then
+            if swepGetProcessedValue(self, "ShotgunReload", true) or (selfTbl.GetReloadFinishTime(self) - CurTime()) > 0.1 then
                 hide = false
             end
-        else
-            hide = false
+        end
+
+        if hide then
+            for i = 1, #hidebones do
+                bones[hidebones[i]] = true
+            end
         end
     end
 
-    local index = self:GetHideBoneIndex()
-    if index ~= 0 and ((hidefp and not wm) or (reloadhidebones and self:ShouldTPIK() and wm)) then
-        for _, bone in ipairs(reloadhidebones[index] or {}) do
-            bones[bone] = true
-        end
-    elseif hidebones and hide then
-        for _, bone in ipairs(hidebones) do
-            bones[bone] = true
-        end
-    end
-
-    return self:RunHook("Hook_HideBones", bones) or bones
+    return selfTbl.RunHook(self, "Hook_HideBones", bones) or bones
 end
-
--- function SWEP:GetElements()
---     return {}
--- end
