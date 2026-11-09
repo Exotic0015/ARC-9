@@ -1,79 +1,137 @@
+local LocalPlayer, RealFrameTime, Vector, tonumber, getmetatable =
+      LocalPlayer, RealFrameTime, Vector, tonumber, getmetatable
+
+local string_Explode, string_Replace =
+      string.Explode, string.Replace
+
+local math_ease_InExpo, math_min =
+      math.ease.InExpo, math.min
+
+local render_GetLightColor =
+      render.GetLightColor
+
+local ENT = FindMetaTable("Entity")
+local ENT_GetTable, ENT_IsValid, ENT_GetOwner, ENT_GetPos =
+      ENT.GetTable, ENT.IsValid, ENT.GetOwner, ENT.GetPos
+
+local PLY = FindMetaTable("Player")
+local PLY_GetActiveWeapon =
+      PLY.GetActiveWeapon
+
+local NPC = FindMetaTable("NPC")
+local NPC_GetActiveWeapon =
+      NPC.GetActiveWeapon
+
+local IMAT = FindMetaTable("IMaterial")
+local IMAT_GetTexture, IMAT_SetTexture, IMAT_GetFloat, IMAT_SetFloat, IMAT_SetUndefined, IMAT_Recompute =
+      IMAT.GetTexture, IMAT.SetTexture, IMAT.GetFloat, IMAT.SetFloat, IMAT.SetUndefined, IMAT.Recompute
+local IMAT_GetString, IMAT_SetString, IMAT_SetVector =
+      IMAT.GetString, IMAT.SetString, IMAT.SetVector
+
+local VEC = FindMetaTable("Vector")
+local VEC_IsEqualTol, VEC_Unpack, VEC_Set, VEC_Mul =
+      VEC.IsEqualTol, VEC.Unpack, VEC.Set, VEC.Mul
+
+local function Lerp(delta, from, to)
+    return from + (to - from) * delta
+end
+
+local function getActiveWeapon(owner)
+    local mt = getmetatable(owner)
+    if mt == PLY then return PLY_GetActiveWeapon(owner) end
+    if mt == NPC then return NPC_GetActiveWeapon(owner) end
+    return owner:GetActiveWeapon()
+end
+
 matproxy.Add({
     name = "CustomCamo",
-    init = function( self, mat, values )
+    init = function(self, mat, values)
+        local detailResult = values.camotexture
+        local scaleResult = values.camoscale
+        local blendResult = values.blend
+
         -- Store the name of the variable we want to set
-        self.DetailResult = values.camotexture
-        self.ScaleResult = values.camoscale
-        self.BlendResult = values.blend
+        self.DetailResult = detailResult
+        self.ScaleResult = scaleResult
+        self.BlendResult = blendResult
 
-        if self.DetailResult then
-            self.DefaultTexture = mat:GetTexture(self.DetailResult)
+        if detailResult then
+            self.DefaultTexture = IMAT_GetTexture(mat, detailResult)
         end
 
-        if self.ScaleResult then
-            self.DefaultScale = mat:GetFloat(self.ScaleResult)
+        if scaleResult then
+            self.DefaultScale = IMAT_GetFloat(mat, scaleResult)
         end
 
-        if self.BlendResult then
-            self.DefaultBlend = mat:GetFloat(self.BlendResult)
+        if blendResult then
+            self.DefaultBlend = IMAT_GetFloat(mat, blendResult)
         end
     end,
-    bind = function( self, mat, ent )
-        if self.DetailResult and ent.CustomCamoTexture then
-            -- mat:SetString(self.DetailResult, self.CustomCamoTexture)
-            mat:SetTexture(self.DetailResult, ent.CustomCamoTexture)
-            self.ShouldRecomputeIfSet = true
-        elseif self.DetailResult then
-            self.DefaultTexture = nil
-            if !self.DefaultTexture then
-                mat:SetUndefined(self.DetailResult)
-                if self.ShouldRecomputeIfSet then
-                    mat:Recompute()
-                    self.ShouldRecomputeIfSet = false
-                end
-            else
-                mat:SetTexture(self.DetailResult, self.DefaultTexture)
-            end
-        end
+    bind = function(self, mat, ent)
+        if not ent or not ENT_IsValid(ent) then return end
+        local entTbl = ENT_GetTable(ent)
+        if not entTbl then return end
 
-        if self.ScaleResult and ent.CustomCamoScale then
-            mat:SetFloat(self.ScaleResult, ent.CustomCamoScale)
-            self.ShouldRecomputeIfSet = true
-        elseif self.ScaleResult then
-            if self.DefaultScale then
-                mat:SetFloat(self.ScaleResult, self.DefaultScale)
+        local detailResult = self.DetailResult
+        if detailResult then
+            local camoTex = entTbl.CustomCamoTexture
+            if camoTex then
+                IMAT_SetTexture(mat, detailResult, camoTex)
+                self.ShouldRecomputeIfSet = true
             else
-                mat:SetUndefined(self.ScaleResult)
+                IMAT_SetUndefined(mat, detailResult)
                 if self.ShouldRecomputeIfSet then
-                    mat:Recompute()
+                    IMAT_Recompute(mat)
                     self.ShouldRecomputeIfSet = false
                 end
             end
         end
 
-        if self.BlendResult and ent.CustomCamoBlend then
-            mat:SetFloat(self.BlendResult, ent.CustomCamoBlend)
-            self.ShouldRecomputeIfSet = true
-        elseif self.BlendResult then
-            if self.DefaultBlend then
-                mat:SetFloat(self.BlendResult, self.DefaultBlend)
+        local scaleResult = self.ScaleResult
+        if scaleResult then
+            local camoScale = entTbl.CustomCamoScale
+            if camoScale then
+                IMAT_SetFloat(mat, scaleResult, camoScale)
+                self.ShouldRecomputeIfSet = true
             else
-                mat:SetUndefined(self.DefaultBlend)
-                if self.ShouldRecomputeIfSet then
-                    mat:Recompute()
-                    self.ShouldRecomputeIfSet = false
+                local defScale = self.DefaultScale
+                if defScale then
+                    IMAT_SetFloat(mat, scaleResult, defScale)
+                else
+                    IMAT_SetUndefined(mat, scaleResult)
+                    if self.ShouldRecomputeIfSet then
+                        IMAT_Recompute(mat)
+                        self.ShouldRecomputeIfSet = false
+                    end
                 end
             end
         end
 
+        local blendResult = self.BlendResult
+        if blendResult then
+            local camoBlend = entTbl.CustomCamoBlend
+            if camoBlend then
+                IMAT_SetFloat(mat, blendResult, camoBlend)
+                self.ShouldRecomputeIfSet = true
+            else
+                local defBlend = self.DefaultBlend
+                if defBlend then
+                    IMAT_SetFloat(mat, blendResult, defBlend)
+                else
+                    IMAT_SetUndefined(mat, blendResult)
+                    if self.ShouldRecomputeIfSet then
+                        IMAT_Recompute(mat)
+                        self.ShouldRecomputeIfSet = false
+                    end
+                end
+            end
+        end
     end
 })
 
 
 
-
-
---[[ 
+--[[
     Advanced camo usage:
 
 
@@ -86,7 +144,7 @@ matproxy.Add({
 
     ...
 
-    "Arc9CustomCamoAdvanced" 
+    "Arc9CustomCamoAdvanced"
         {
             "camoTexture" $detail
             "camoScale" $detailscale
@@ -102,81 +160,101 @@ matproxy.Add({
             "rotateVar" "$detailangle"
             "resultVar" "$detailtexturetransform"
         }
-        
+
 ]]--
+
+local fallbackCamo = {}
 
 matproxy.Add({
     name = "Arc9CustomCamoAdvanced",
-    init = function( self, mat, values )
+    init = function(self, mat, values)
+        local detailResult = values.camotexture
+        local phongResult = values.phonk
+        local scaleResult = values.camoscale
+        local angleResult = values.camoangle
+        local blendModeResult = values.camoblendmode
+        local blendFactorResult = values.camoblendfactor
+
         -- Store the name of the variable we want to set
-        self.DetailResult = values.camotexture or ""
-        self.PhongResult = values.phonk or ""
-        self.ScaleResult = values.camoscale
-        self.AngleResult = values.camoangle
-        self.BlendModeResult = values.camoblendmode
-        self.BlendFactorResult = values.camoblendfactor
-        self.AttName = mat:GetString("$attname") or values.attname or ""
-        if self.PhongResult then self.DefaultPhong = mat:GetFloat(self.PhongResult) end
-        if self.ScaleResult then self.DefaultScale = mat:GetFloat(self.ScaleResult) end
-        if self.AngleResult then self.DefaultAngle = mat:GetFloat(self.AngleResult) end
-        if self.BlendFactorResult then self.DefaultFactor = mat:GetFloat(self.BlendFactorResult) end
+        self.DetailResult = detailResult
+        self.PhongResult = phongResult
+        self.ScaleResult = scaleResult
+        self.AngleResult = angleResult
+        self.BlendModeResult = blendModeResult
+        self.BlendFactorResult = blendFactorResult
+        self.AttName = IMAT_GetString(mat, "$attname") or values.attname or ""
 
-        if self.DetailResult then self.DefaultTexture = mat:GetTexture(self.DetailResult) end
+        if phongResult then self.DefaultPhong = IMAT_GetFloat(mat, phongResult) end
+        if scaleResult then self.DefaultScale = IMAT_GetFloat(mat, scaleResult) end
+        if angleResult then self.DefaultAngle = IMAT_GetFloat(mat, angleResult) end
+        if blendFactorResult then self.DefaultFactor = IMAT_GetFloat(mat, blendFactorResult) end
+        if detailResult then self.DefaultTexture = IMAT_GetTexture(mat, detailResult) end
     end,
-    bind = function( self, mat, ent )
-        local wep, camo, camotex, camoscale, camorotate
+    bind = function(self, mat, ent)
+        if not ent or not ENT_IsValid(ent) then return end
+        local entTbl = ENT_GetTable(ent)
+        if not entTbl then return end
 
-        if IsValid(ent) then
-            if ent.weapon and ent.weapon.ARC9 then
-                wep = ent.weapon
-            else
-                local owner = ent:GetOwner()
-                if IsValid(owner) then
-                    local weapon = owner:GetActiveWeapon()
-                    if IsValid(weapon) then wep = weapon end
+        local wep = entTbl.weapon
+        if not (wep and ENT_IsValid(wep) and ENT_GetTable(wep).ARC9) then
+            local owner = ENT_GetOwner(ent)
+            wep = (owner and ENT_IsValid(owner)) and getActiveWeapon(owner) or nil
+        end
+
+        local camo
+        if wep and ENT_IsValid(wep) then
+            local wepTbl = ENT_GetTable(wep)
+            if wepTbl then
+                local slottbl = entTbl.slottbl
+                local maybeaddress = slottbl and slottbl.Address
+                local getAdvCamo = wepTbl.GetAdvancedCamo
+                if getAdvCamo then
+                    camo = getAdvCamo(wep, self.AttName, maybeaddress)
+                    if camo and not camo.Texture then camo = nil end
                 end
-            end
 
-            if wep then
-                local maybeadress = ent.slottbl and ent.slottbl.Address
-                camo = wep.GetAdvancedCamo and wep:GetAdvancedCamo(self.AttName, maybeadress)
-                if camo and !camo.Texture then camo = nil end
-                if !camo and ent.CustomCamoTexture and wep.AdvancedCamoCache == false then camo = { Texture = ent.CustomCamoTexture } end -- fallback if regular camo slot exists
+                if not camo and entTbl.CustomCamoTexture and wepTbl.AdvancedCamoCache == false then
+                    fallbackCamo.Texture = entTbl.CustomCamoTexture
+                    camo = fallbackCamo
+                end
             end
         end
 
-        if camo and camo.Texture and self.DetailResult then
-            -- mat:SetString(self.DetailResult, camo)
-            mat:SetTexture(self.DetailResult, camo.Texture)
-            -- if self.PhongResult then mat:SetFloat(self.PhongResult, 0.6) end
-            if self.PhongResult then 
-                mat:SetFloat(self.PhongResult, (self.DefaultPhong or 1) * (camo.PhongMult or 0.1)) 
-                if camo.PhongMult and camo.PhongMult <= 0.1 then ent.PhongMultSoLowerEnvmapPls = true end
-            end
-            if self.ScaleResult then mat:SetFloat(self.ScaleResult, (self.DefaultScale or 1) * (camo.Scale or 1)) end
-            if self.AngleResult then mat:SetFloat(self.AngleResult, (self.DefaultAngle or 0) + (camo.Rotate or 0)) end
-            if self.BlendModeResult then mat:SetFloat(self.BlendModeResult, camo.BlendMode or 4) end
-            if self.BlendFactorResult then mat:SetFloat(self.BlendFactorResult, (self.DefaultFactor or 1) * (camo.Factor or 0.5)) end
-            
-            self.ShouldRecomputeIfSet = true
-        elseif self.DetailResult then
-            self.DefaultTexture = nil
-            if !self.DefaultTexture then
-                mat:SetUndefined(self.DetailResult)
-                mat:SetFloat(self.PhongResult, self.DefaultPhong)
-                ent.PhongMultSoLowerEnvmapPls = nil
-                if self.ShouldRecomputeIfSet then
-                    mat:Recompute()
-                    self.ShouldRecomputeIfSet = false
-                end
-            else
-                mat:SetTexture(self.DetailResult, self.DefaultTexture)
+        local detailResult = self.DetailResult
+        if camo and camo.Texture and detailResult then
+            IMAT_SetTexture(mat, detailResult, camo.Texture)
 
-                if self.PhongResult then mat:SetFloat(self.PhongResult, self.DefaultPhong or 0) ent.PhongMultSoLowerEnvmapPls = nil end
-                if self.ScaleResult then mat:SetFloat(self.ScaleResult, self.DefaultScale or 0) end
-                if self.AngleResult then mat:SetFloat(self.AngleResult, self.DefaultAngle or 0) end
-                if self.BlendModeResult then mat:SetFloat(self.BlendModeResult, 4) end
-                if self.BlendFactorResult then mat:SetFloat(self.BlendFactorResult, self.DefaultFactor or 0) end
+            local phongResult = self.PhongResult
+            if phongResult then
+                local phongMult = camo.PhongMult
+                IMAT_SetFloat(mat, phongResult, (self.DefaultPhong or 1) * (phongMult or 0.1))
+                if phongMult and phongMult <= 0.1 then
+                    entTbl.PhongMultSoLowerEnvmapPls = true
+                end
+            end
+
+            local scaleResult = self.ScaleResult
+            if scaleResult then IMAT_SetFloat(mat, scaleResult, (self.DefaultScale or 1) * (camo.Scale or 1)) end
+
+            local angleResult = self.AngleResult
+            if angleResult then IMAT_SetFloat(mat, angleResult, (self.DefaultAngle or 0) + (camo.Rotate or 0)) end
+
+            local blendModeResult = self.BlendModeResult
+            if blendModeResult then IMAT_SetFloat(mat, blendModeResult, camo.BlendMode or 4) end
+
+            local blendFactorResult = self.BlendFactorResult
+            if blendFactorResult then IMAT_SetFloat(mat, blendFactorResult, (self.DefaultFactor or 1) * (camo.Factor or 0.5)) end
+
+            self.ShouldRecomputeIfSet = true
+        elseif detailResult then
+            IMAT_SetUndefined(mat, detailResult)
+            if self.PhongResult then
+                IMAT_SetFloat(mat, self.PhongResult, self.DefaultPhong or 0)
+            end
+            entTbl.PhongMultSoLowerEnvmapPls = nil
+            if self.ShouldRecomputeIfSet then
+                IMAT_Recompute(mat)
+                self.ShouldRecomputeIfSet = false
             end
         end
     end
@@ -184,70 +262,79 @@ matproxy.Add({
 
 matproxy.Add({
     name = "ARC9_Heat",
-    init = function( self, mat, values )
+    init = function(self, mat, values)
         self.BlendResult = values.blend
     end,
+    bind = function(self, mat, ent)
+        if not ent or not ENT_IsValid(ent) then return end
 
-    bind = function( self, mat, ent )
-        if IsValid(ent) and IsValid(ent.weapon) then ent = ent.weapon end
-
-        if IsValid(ent) and IsValid(ent:GetOwner()) and IsValid(ent:GetOwner():GetActiveWeapon()) then
-            local weapon = ent:GetOwner():GetActiveWeapon()
-            if weapon and weapon.ARC9 and weapon:GetProcessedValue("Overheat", true) then
-                mat:SetFloat(self.BlendResult, (math.ease.InExpo(weapon:GetHeatAmount() / weapon:GetProcessedValue("HeatCapacity", true))) * 2)
-            end
-        else
-            mat:SetFloat(self.BlendResult, 0)
+        local entTbl = ENT_GetTable(ent)
+        local entWep = entTbl and entTbl.weapon
+        if entWep and ENT_IsValid(entWep) then
+            ent = entWep
         end
+
+        local owner = ENT_GetOwner(ent)
+        local weapon = (owner and ENT_IsValid(owner)) and getActiveWeapon(owner) or nil
+
+        if weapon and ENT_IsValid(weapon) then
+            local wepTbl = ENT_GetTable(weapon)
+            if wepTbl and wepTbl.ARC9 and wepTbl.GetProcessedValue(weapon, "Overheat", true) then
+                local heat = wepTbl.GetHeatAmount(weapon)
+                local cap = wepTbl.GetProcessedValue(weapon, "HeatCapacity", true)
+                IMAT_SetFloat(mat, self.BlendResult, math_ease_InExpo(heat / cap) * 2)
+                return
+            end
+        end
+
+        IMAT_SetFloat(mat, self.BlendResult, 0)
     end
 })
 
-
 local lastPos = Vector()
 local lastValue = 0
+local tintVec = Vector()
 
--- hyperoptimization +1000 fps
-local lerp = Lerp
-local ENTITY = FindMetaTable("Entity")
-local entityGetPos = ENTITY.GetPos
-local renderGetLightColor = render.GetLightColor
-local vectorIsEqualTol = FindMetaTable("Vector").IsEqualTol
-local mathmin = math.min
-
-matproxy.Add( {
+matproxy.Add({
 	name = "Arc9EnvMapTint",
-	
 	init = function(self, mat, values)
-		local color = {1, 1, 1} 
+		local color = {1, 1, 1}
 
-		if (values.color != nil) then
-			color = string.Explode(" ", string.Replace(string.Replace(values.color, "[", ""), "]", ""))
+		if values.color ~= nil then
+			color = string_Explode(" ", string_Replace(string_Replace(values.color, "[", ""), "]", ""))
 		end
 
-		self.min = values.min or 0
-		self.max = values.max or 1
-		self.color = Vector(color[1], color[2], color[3])
-        
-		--mat:SetTexture("$envmap", values.envmap or "arc9/shared/envmaps/specularity_50")
-		if (values.envmap != "env_cubemap") then
-		   mat:SetTexture("$envmap", values.envmap or "arc9/shared/envmaps/specularity_50")
+		self.min = tonumber(values.min) or 0
+		self.max = tonumber(values.max) or 1
+		self.color = Vector(tonumber(color[1]) or 1, tonumber(color[2]) or 1, tonumber(color[3]) or 1)
+
+		if values.envmap ~= "env_cubemap" then
+		   IMAT_SetTexture(mat, "$envmap", values.envmap or "arc9/shared/envmaps/specularity_50")
 		else
-		   mat:SetString("$envmap", "env_cubemap")
+		   IMAT_SetString(mat, "$envmap", "env_cubemap")
 		end
 	end,
-
 	bind = function(self, mat, ent)
-		if !IsValid(ent) then return end
-        local getpos = entityGetPos(ent)
-		if !vectorIsEqualTol(lastPos, getpos, 1) then
-			local c = renderGetLightColor(getpos)
-			lastValue = (c.x * 0.2126) + (c.y * 0.7152) + (c.z * 0.0722)
-			lastValue = mathmin(lastValue * 2, 1)
-			lastPos = getpos
-		end
-		ent.m_Arc9EnvMapTint = lerp(10 * RealFrameTime(), ent.m_Arc9EnvMapTint || 0, lastValue)
-        if ent.PhongMultSoLowerEnvmapPls then ent.m_Arc9EnvMapTint = ent.m_Arc9EnvMapTint * 0.3 end
-		mat:SetVector("$envmaptint", self.color * lerp(ent.m_Arc9EnvMapTint, self.min, self.max))
+        if not ent or not ENT_IsValid(ent) then return end
+        local entTbl = ENT_GetTable(ent)
+        if not entTbl then return end
+
+        local getpos = ENT_GetPos(ent)
+        if not VEC_IsEqualTol(lastPos, getpos, 1) then
+            local r, g, b = VEC_Unpack(render_GetLightColor(getpos))
+            lastValue = math_min(((r * 0.2126) + (g * 0.7152) + (b * 0.0722)) * 2, 1)
+            lastPos = getpos
+        end
+
+        local tint = Lerp(10 * RealFrameTime(), entTbl.m_Arc9EnvMapTint or 0, lastValue)
+        if entTbl.PhongMultSoLowerEnvmapPls then
+            tint = tint * 0.3
+        end
+        entTbl.m_Arc9EnvMapTint = tint
+
+        VEC_Set(tintVec, self.color)
+        VEC_Mul(tintVec, Lerp(tint, self.min, self.max))
+        IMAT_SetVector(mat, "$envmaptint", tintVec)
 	end
 })
 
@@ -270,37 +357,45 @@ matproxy.Add({
     init = function(self, mat, values)
         self.ResultTo = values.resultvar
 
-		local color = {1, 1, 1} 
+		local color = {1, 1, 1}
 
-		if (values.color != nil) then
-			color = string.Explode(" ", string.Replace(string.Replace(values.color, "[", ""), "]", ""))
+		if values.color ~= nil then
+			color = string_Explode(" ", string_Replace(string_Replace(values.color, "[", ""), "]", ""))
 		end
 
-		self.min = values.min or 0
-		self.max = values.max or 1
-		self.color = Vector(color[1], color[2], color[3])
+		self.min = tonumber(values.min) or 0
+		self.max = tonumber(values.max) or 1
+		self.color = Vector(tonumber(color[1]) or 1, tonumber(color[2]) or 1, tonumber(color[3]) or 1)
     end,
     bind = function(self, mat, ent)
+        if not ent or not ENT_IsValid(ent) then return end
+
         local ply = LocalPlayer()
+        if not ply or not ENT_IsValid(ply) then return end
 
-        if IsValid(ply) then
-            local weapon = ply:GetActiveWeapon()
+        local weapon = PLY_GetActiveWeapon(ply)
+        if not weapon or not ENT_IsValid(weapon) then return end
 
-            if IsValid(weapon) and weapon.ARC9 then
-                local amt = 1 - weapon:GetSightAmount() * 0.25
-                
-                if !IsValid(ent) then return end
-                local getpos = entityGetPos(ent)
-                if !vectorIsEqualTol(lastPos, getpos, 1) then
-                    local c = renderGetLightColor(getpos)
-                    lastValue = (c.x * 0.2126) + (c.y * 0.7152) + (c.z * 0.0722)
-                    lastValue = mathmin(lastValue * 2, 1)
-                    lastPos = getpos
-                end
-                ent.m_Arc9EnvMapTint = lerp(10 * RealFrameTime(), ent.m_Arc9EnvMapTint || 0, lastValue)
-                mat:SetVector("$envmaptint", self.color * lerp(ent.m_Arc9EnvMapTint * amt, self.min, self.max))
-            end
-            
+        local wepTbl = ENT_GetTable(weapon)
+        if not wepTbl or not wepTbl.ARC9 then return end
+
+        local entTbl = ENT_GetTable(ent)
+        if not entTbl then return end
+
+        local amt = 1 - wepTbl.GetSightAmount(weapon) * 0.25
+
+        local getpos = ENT_GetPos(ent)
+        if not VEC_IsEqualTol(lastPos, getpos, 1) then
+            local r, g, b = VEC_Unpack(render_GetLightColor(getpos))
+            lastValue = math_min(((r * 0.2126) + (g * 0.7152) + (b * 0.0722)) * 2, 1)
+            lastPos = getpos
         end
+
+        local tint = Lerp(10 * RealFrameTime(), entTbl.m_Arc9EnvMapTint or 0, lastValue)
+        entTbl.m_Arc9EnvMapTint = tint
+
+        VEC_Set(tintVec, self.color)
+        VEC_Mul(tintVec, Lerp(tint * amt, self.min, self.max))
+        IMAT_SetVector(mat, "$envmaptint", tintVec)
    end
 })
